@@ -104,3 +104,14 @@ test('a clip that fails or a light that throws never leaves a tile lit or breaks
   await c.advance(5000);
   assert.deepEqual(await done, { read: 3, cancelled: false }); assert.equal(lit.size, 0);
 });
+
+test('each label is read as it is on screen when the reading reaches it (spec 2026-10-28 §11: Yes and No in full)', async () => {
+  const c = clock(), v = voice(c), shown = { yes: 'Yes', no: 'No' };
+  const reader = createOptionsReader({ delayMs: () => 12000, name: () => 'Sam', ...v, ...c });
+  void reader.armed({ id: '1', items: [{ id: 'a', get label() { return shown.yes; } }, { id: 'b', get label() { return shown.no; } }, { label: "I'm not sure" }] });
+  shown.yes = "Yes, I'm angry";
+  await c.advance(12000 + 500 + 100);
+  shown.no = "No, I'm not angry";
+  await c.advance(10000);
+  assert.deepEqual(v.log.filter(line => line.startsWith('say:')), ['say:Sam, your options are', "say:Yes, I'm angry", "say:No, I'm not angry", "say:I'm not sure"]);
+});

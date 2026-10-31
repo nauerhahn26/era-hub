@@ -595,3 +595,56 @@ the press tones and other Chat pages (broadcast channel), with a tail that
 adds the device's audio latency (088748f); the exact bypass on the device
 was not reproduced (device-voice early end or a second Chat page are the
 candidates). Gate 206/0.
+
+## Clear, auto-off, quiet notices, two-tier ear (10/31) — LANDED 6218864 + e362cf3, v1.0.41
+- [x] Partner Clear in the top bar (696ffd5, 94edc8a).
+- [x] Ear auto-off after chatWakeIdleMs (default 30 min) with status-line
+      notices at 2 and 1 minutes, no countdown; chatWakeMode set false on
+      idle-off (f6912d5, f668552). Test-mode and room-audio banners removed;
+      the dialog section is "Session records".
+- [x] Two tiers: ERA_CHAT_STREAM_EAR_MODEL (private) puts the ear on a
+      cheaper profile; 10 s ring buffer replayed to the main stream on a wake
+      (from 1.5 s before the utterance's first words); back to the ear tier
+      after chatEngageMs (default 2 min) without a wake; holds/presses always
+      main (f04295b, b66f421; suite chat-ear-tier-hub). Gate 207/0.
+Cost study (10/31 morning, 13 min, 27 wakes): model ≈ $0.08/meal (92% of
+input cached), ear ≈ $0.10/meal on the pro realtime tier ($0.45/hr, billed
+per socket minute, idle included), voice within the plan; 3–5 meals/day ≈
+$20–27/month at list prices; an ear left on all day would be $324/month,
+hence auto-off. Private price table written on both devices
+(chat-prices.json) so the session panel shows cost per day.
+Next: an on-device wake detector in the ear slot (zero idle cost; needs an
+"Ellie" model trained from samples; dad's family recordings = validation).
+Measured (10/31 evening, scratch hub against the real streaming service, 36
+wake/press trials, 0 misses): the ear tier adds ≈0.6–0.8 s to the FIRST
+question after a quiet spell when the name and the question come in one
+breath (end of speech → sealed 1.1–1.2 s vs 0.42 s on the single tier): the
+cheap tier's own end-of-turn (≈0.5 s), a cold main socket (≈120 ms; the main
+stream closes after 60 s idle) and the replay's re-transcription (≈0.45 s).
+"Ellie, [pause] juice or water?" costs nothing extra (the bare name engages
+the main stream during the pause). Within the engagement window: no penalty
+(0.42 s vs 0.52 s). Holds and presses: untouched. The cheap tier caught
+"Ellie" 12/12. Also seen: a question without the name is dropped even while
+engaged (§8's rule, unchanged by the tiers). Possible trims if the first wake
+feels slow: keep the main socket warm while the ear is on (saves ≈120 ms), or
+engage on the ear's first partial that carries the name instead of its
+end-of-turn (saves ≈0.5 s, costs a few seconds of main-stream time per false
+start).
+
+## Yes and No in full + what the ear heard (dad, 10/31 evening) — spec §11, §12
+Dad: "the icons should be the same yes, no icons we use on TD Snap … yes with
+an angry face … the yes would not just say yes, it would say yes, I'm angry …
+if it takes a second to load, it's like, where's the yes or no context?"
+And a question lost in Listen mode (13:08–13:23 PT) that no record explains.
+- [x] Y1 vocabulary ids: yes 5583, no 5525 (badge-able); the corner and middle
+      yes/no pictures follow (symbols.js already routes yes/no by word).
+- [x] Y2 hub: a yes-or-no question runs the local set at once AND a model job
+      for the full answers (`chat-choices.js` shape yes-no → {yes, no, feeling});
+      `yes-no-answered` event; abort rules as for choices; a feeling word must
+      be in the vocabulary table or is dropped.
+- [x] Y3 page: middle Yes/No take label + say + merged picture (feeling picture,
+      head badge); corners speak the phrase; selection wins; Clear/Back/new
+      question reset; read-aloud uses the phrases; `content.answered`.
+- [x] E1 ear records (kind 'ear') from the hub while test mode is on; page gate
+      periods via `control {type:'gate'}`; diagnostics box shows the last twelve.
+- [x] Tests first for each; registry regenerated if browser launch counts change.

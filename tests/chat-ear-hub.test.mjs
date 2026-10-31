@@ -348,3 +348,163 @@ test('server.js turns the saved switch off when the ear goes idle', async () => 
   assert.match(source, /onWakeIdle: \(\) => wakeModeOff\(DATA\)/);
   assert.match(source, /wakeIdleMs: \(\) => chatWake\(DATA\)\.chatWakeIdleMs/);
 });
+
+// ---- Yes and No in full (spec 2026-10-28 §11, plan Y2) ----
+// A yes-or-no question stages the local set at once; one model request for the
+// two answers in full runs after the seal and arrives as `yes-no-answered`.
+const REPLY_ENV = { ERA_CHAT_TEXT_URL: 'https://reply.invalid/responses', ERA_CHAT_TEXT_MODEL: 'reply-model', ERA_CHAT_TEXT_TOKEN: 'reply-secret' };
+const completed = value => new Response(JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(value) }] }],
+  usage: { input_tokens: 300, output_tokens: 20 } }));
+function answerService({ value = { yes: "Yes, I'm hungry", no: "No, I'm not hungry", feeling: 'hungry' }, hold = false } = {}) {
+  const calls = [], gates = [];
+  let aborted = 0;
+  const fetcher = (url, init) => {
+    if (init?.method === 'HEAD') return Promise.resolve(new Response(null));
+    const body = JSON.parse(init.body); calls.push(body);
+    if (body.text.format.name !== 'yes_no') {
+      const text = JSON.stringify({ choices: [{ label: 'Pasta', say: 'Pasta please.', symbol: 'chat', picture: 'pasta' }, { label: 'Not sure', say: "I'm not sure.", symbol: 'chat', picture: 'shrug' }] });
+      return Promise.resolve(new Response(new ReadableStream({ start(controller) {
+        for (const event of [{ type: 'response.output_text.delta', delta: text }, { type: 'response.completed', response: {} }]) controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+        controller.close(); } }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } }));
+    }
+    return new Promise((resolve, reject) => {
+      init.signal.addEventListener('abort', () => { aborted++; reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); });
+      const answer = () => resolve(completed(value));
+      if (hold) gates.push(answer); else answer();
+    });
+  };
+  return { fetcher, calls, gates, aborted: () => aborted, answers: () => calls.filter(body => body.text.format.name === 'yes_no') };
+}
+
+test('a yes-or-no question: the local set is sealed at once, then the answers in full arrive with the feeling\'s picture', async t => {
+  const service = await turnsService(t, { 2: [ENDED('Ellie, are you hungry')] });
+  const model = answerService({ hold: true });
+  const h = await hub(t, { service, env: REPLY_ENV, fetch: model.fetcher });
+  const s = await h.session();
+  const opened = await s.open({ ear: true, context: ['Me: Hi!'] });
+  await s.frames(3);
+  await until(() => s.events('batch-sealed').length === 1);
+  const batch = s.events('batch-sealed')[0];
+  assert.equal(batch.kind, 'yes-no');
+  assert.deepEqual(s.events('choice-staged').map(e => e.choice.label), ['Yes', 'No', "I'm not sure", 'Please say that again']);
+  await until(() => model.gates.length === 1);
+  assert.equal(s.events('yes-no-answered').length, 0, 'the seal never waits for the answers');
+  const input = JSON.parse(model.answers()[0].input);
+  assert.deepEqual([input.question, input.context], ['are you hungry', ['Me: Hi!']]);
+  model.gates[0]();
+  await until(() => s.events('yes-no-answered').length === 1);
+  const answer = s.events('yes-no-answered')[0];
+  assert.deepEqual([answer.generation, answer.windowId, answer.seq], [opened.generation, batch.windowId, 1]);
+  assert.deepEqual(answer.yes, { label: "Yes, I'm hungry", say: "Yes, I'm hungry", symbol: 'hungry', symbolId: 4962 });
+  assert.deepEqual(answer.no, { label: "No, I'm not hungry", say: "No, I'm not hungry", symbol: 'hungry', symbolId: 4962 });
+  assert.equal(answer.feeling, 'hungry');
+  assert.ok(s.seen.indexOf(answer) > s.seen.indexOf(batch));
+});
+
+test('the answers in full: no feeling keeps the heads; a question that is not yes-or-no asks for none; a new wake or a drop aborts them', async t => {
+  const service = await turnsService(t, { 2: [ENDED('Ellie, is it raining')], 4: [ENDED('Ellie, what do you want for lunch', 1)], 6: [ENDED('Ellie, do you like dogs', 2)] });
+  const model = answerService({ value: { yes: "Yes, it's raining", no: "No, it isn't", feeling: 'none' }, hold: true });
+  const h = await hub(t, { service, env: REPLY_ENV, fetch: model.fetcher });
+  const s = await h.session();
+  await s.open({ ear: true });
+  await s.frames(2);
+  await until(() => model.gates.length === 1);
+  model.gates[0]();
+  await until(() => s.events('yes-no-answered').length === 1);
+  const plain = s.events('yes-no-answered')[0];
+  assert.deepEqual([plain.yes, plain.no, plain.feeling], [{ label: "Yes, it's raining", say: "Yes, it's raining" }, { label: "No, it isn't", say: "No, it isn't" }, null]);
+  await s.frames(2);
+  await until(() => s.events('batch-sealed').length === 2);
+  await pause(50);
+  assert.equal(model.answers().length, 1, 'an open question gets no answers in full');
+  await s.frames(2);
+  await until(() => model.gates.length === 2);
+  assert.equal((await s.control('drop')).status, 200, 'the page dropped the question (Something else, Clear, Back)');
+  await until(() => model.aborted() === 1);
+  model.gates[1]();
+  await pause(50);
+  assert.equal(s.events('yes-no-answered').length, 1, 'nothing for a dropped question');
+  assert.equal(s.events('ear').filter(e => e.state === 'off').length, 0, 'a drop leaves the ear listening');
+});
+
+test('the answers in full are aborted by a new question, a cancel and a close, and need the built-in reply core', async t => {
+  const service = await turnsService(t, { 2: [ENDED('Ellie, are you tired')], 4: [ENDED('Ellie, are you cold', 1)] });
+  const model = answerService({ hold: true });
+  const h = await hub(t, { service, env: REPLY_ENV, fetch: model.fetcher });
+  const s = await h.session();
+  await s.open({ ear: true });
+  await s.frames(2);
+  await until(() => model.gates.length === 1);
+  await s.frames(2);
+  await until(() => model.aborted() === 1 && model.gates.length === 2);
+  assert.equal((await s.control('cancel')).status, 200);
+  await until(() => model.aborted() === 2);
+  for (const gate of model.gates) gate();
+  await pause(50);
+  assert.equal(s.events('yes-no-answered').length, 0);
+  const none = await hub(t, { service: await turnsService(t, { 2: [ENDED('Ellie, are you tired')] }) });
+  const q = await none.session();
+  await q.open({ ear: true });
+  await q.frames(2);
+  await until(() => q.events('batch-sealed').length === 1);
+  await pause(50);
+  assert.equal(q.events('yes-no-answered').length, 0, 'no reply model: the local set alone');
+});
+
+// ---- What the ear heard (spec 2026-10-28 §12, plan E1) ----
+// Every ear event reaches the hub's `onEar` (server.js: the chat-turns writer,
+// which keeps them only while test mode is on): each turn's words and tier,
+// each seal and what the wake rule found, pause/resume/off with reasons, a lost
+// socket, and the page's gate periods (`control {type:'gate'}`).
+const earOf = records => (...events) => records.filter(record => events.includes(record.event));
+test('ear records: each turn and seal with what the wake rule found, pause and resume with reasons, off; the page\'s gate', async t => {
+  const service = await turnsService(t, { 2: [ENDED('what time is it')], 4: [ENDED('Ellie, are you hungry', 1)] }, { onTerminate: [ENDED('would you like a story')] });
+  const records = [], ear = earOf(records);
+  let now = 1000000;
+  const h = await hub(t, { service, clock: () => now, extra: { onEar: record => { records.push(record); } } });
+  const s = await h.session();
+  const opened = await s.open({ ear: true });
+  await s.frames(5);
+  await until(() => s.events('utterance-sealed').length === 1);
+  assert.deepEqual(ear('turn').map(r => [r.tier, r.text]), [['main', 'what time is it'], ['main', 'Ellie, are you hungry']]);
+  assert.deepEqual(ear('seal').map(r => [r.text, r.wake, r.question]), [['what time is it', 'none', undefined], ['Ellie, are you hungry', 'question', 'are you hungry']]);
+  assert.ok(records.every(r => r.earId === opened.earId && r.at === now), 'the ear and the hub\'s clock on every line');
+  // The page's gate: recorded, nothing else changes; a bad one is refused.
+  assert.equal((await s.control('gate', { on: true, at: 1234.5 })).status, 200);
+  assert.equal((await s.control('gate', { on: false, at: 1300, source: 'other' })).status, 200);
+  for (const bad of [{ on: 'yes', at: 1 }, { on: true }, { on: true, at: 1, source: 'tab' }]) assert.equal((await s.control('gate', bad)).status, 400, JSON.stringify(bad));
+  assert.deepEqual(ear('gate').map(r => [r.on, r.source, r.pageAt]), [[true, 'page', 1234.5], [false, 'other', 1300]]);
+  assert.equal(s.events('ear').length, 1, 'the gate never pauses the ear');
+  // A hold pauses it; the final resumes it; the switch turns it off.
+  s.generation = (await (await s.control('ask', { context: [] })).json()).generation;
+  await s.frames(1);
+  assert.equal((await s.control('finish', { seq: s.sent() })).status, 200);
+  await until(() => ear('resume').length === 1);
+  assert.deepEqual([ear('pause')[0].reason, ear('resume')[0].reason], ['hold', 'final']);
+  assert.equal((await s.control('window', { ear: false })).status, 200);
+  assert.deepEqual(ear('off').map(r => r.reason), ['off']);
+  const before = records.length;
+  assert.equal((await s.control('gate', { on: true, at: 2000 })).status, 200);
+  assert.equal(records.length, before, 'no ear, no gate line');
+  assert.ok(records.every(r => Object.keys(r).every(key => ['event', 'at', 'earId', 'tier', 'text', 'wake', 'question', 'reason', 'replayedMs', 'on', 'source', 'pageAt'].includes(key))));
+});
+
+test('ear records: a bare name is found as a name; a lost socket is recorded and the ear is off; a broken writer never touches the ear', async t => {
+  const service = await turnsService(t, { 2: [ENDED('hey ellie')] });
+  const records = [], ear = earOf(records);
+  const h = await hub(t, { service, extra: { onEar: record => { records.push(record); throw new Error('disk full'); } } });
+  const s = await h.session();
+  await s.open({ ear: true });
+  await s.frames(3);
+  await until(() => ear('seal').length === 1);
+  assert.deepEqual([ear('seal')[0].wake, ear('seal')[0].question], ['name', undefined]);
+  s.ws.terminate();
+  await until(() => ear('off').length === 1);
+  assert.deepEqual([ear('socket').length, ear('off')[0].reason], [1, 'socket']);
+  assert.ok(records.indexOf(ear('socket')[0]) < records.indexOf(ear('off')[0]));
+});
+
+test('server.js sends the ear\'s lines to the chat-turns writer', async () => {
+  const source = await fs.readFile(new URL('../server.js', import.meta.url), 'utf8');
+  assert.match(source, /onEar: \(record\) => chatTurns\.ear\(record\)/);
+});

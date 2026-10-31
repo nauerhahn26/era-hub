@@ -432,12 +432,12 @@ test('her lists (stable frame §2): questions, comments and about, generic defau
 test('a turn record keeps the stable frame fields (§4): the mode she swapped to, the page she opened, Something else', () => {
   const base = turnRecord().content;
   for (const extra of [{ mode: 'ask' }, { mode: 'comment' }, { page: 'questions' }, { page: 'comments' }, { page: 'about' }, { again: true },
-    { mode: 'ask', page: 'about', again: true }, { prompted: true }, { back: true }, { wake: true }]) {
+    { mode: 'ask', page: 'about', again: true }, { prompted: true }, { back: true }, { wake: true }, { answered: true }]) {
     const kept = validateTurn(turnRecord({ content: { ...base, ...extra } }));
     assert.deepEqual(kept.content, { ...base, ...extra }, JSON.stringify(extra));
   }
   for (const extra of [{ mode: 'tell' }, { mode: 'one-shot' }, { mode: null }, { page: 'likes' }, { page: 7 }, { again: false }, { again: 'yes' }, { again: 1 },
-    { prompted: false }, { prompted: 'yes' }, { prompted: 1 }, { back: false }, { back: 'yes' }, { back: 1 }, { wake: false }, { wake: 'yes' }])
+    { prompted: false }, { prompted: 'yes' }, { prompted: 1 }, { back: false }, { back: 'yes' }, { back: 1 }, { wake: false }, { wake: 'yes' }, { answered: false }, { answered: 'yes' }])
     assert.throws(() => validateTurn(turnRecord({ content: { ...base, ...extra } })), e => e.status === 400 && e.code === 'invalid-turn', JSON.stringify(extra));
 });
 
@@ -493,4 +493,38 @@ test('the ear\'s cost (stable frame §10): the idle and engagement times, bounde
   const empty = await directory(t);
   wakeModeOff(empty);
   assert.deepEqual(JSON.parse(await fs.readFile(path.join(empty, 'app-settings.json'), 'utf8')), { chatWakeMode: false });
+});
+
+// What the ear heard (spec 2026-10-28 §12): while test mode is on the hub
+// appends `kind: 'ear'` lines to the day's chat-turns log through the same
+// writer; strict fields, text capped at 300, nothing in the turn list or summary.
+test('ear records: appended to the day file only while test mode is on, strict fields, text capped, never in the turn list', async t => {
+  const at = new Date(2026, 9, 31, 13, 8, 0).getTime();
+  const s = await service(t, { extra: { clock: () => at } });
+  const file = path.join(s.logDir, '2026-10-31.jsonl');
+  const lines = async () => (await fs.readFile(file, 'utf8').catch(() => '')).split('\n').filter(Boolean).map(line => JSON.parse(line));
+  s.setOn(false);
+  assert.equal(await s.turns.ear({ event: 'turn', at, tier: 'ear', text: 'what time is it', earId: 'a1b2c3d4e5f6' }), null, 'test mode off: nothing');
+  assert.equal(await exists(file), false);
+  s.setOn(true);
+  const heard = await s.turns.ear({ event: 'turn', at, tier: 'ear', text: 'what\u0007 time ' + 'x'.repeat(400), earId: 'a1b2c3d4e5f6' });
+  assert.equal(heard.kind, 'ear'); assert.equal(heard.event, 'turn'); assert.equal(heard.text.length, 300, 'text capped at 300');
+  assert.ok(!/[\u0000-\u001f]/.test(heard.text), 'control characters never reach the file');
+  assert.equal(heard.at, new Date(at).toISOString()); assert.equal(heard.day, '2026-10-31'); assert.equal(heard.device, 'test-device');
+  for (const value of [{ event: 'tier', at, tier: 'main', replayedMs: 1500 }, { event: 'seal', at, text: 'Ellie, are you hungry', wake: 'question', question: 'are you hungry' },
+    { event: 'pause', at, reason: 'hold' }, { event: 'resume', at, reason: 'final' }, { event: 'off', at, reason: 'idle' }, { event: 'socket', at, reason: 'closed' },
+    { event: 'gate', at, on: true, source: 'page', pageAt: 1234.5 }, { event: 'gate', at, on: false, source: 'other' }])
+    assert.ok(await s.turns.ear(value), JSON.stringify(value));
+  for (const bad of [{ event: 'turn', at, secret: 1 }, { event: 'nope', at }, { event: 'turn' }, { event: 'tier', at, tier: 'cheap' }, { event: 'gate', at, on: 'yes' },
+    { event: 'seal', at, wake: 'maybe' }, { event: 'off', at, reason: 'Bad Reason!' }, { event: 'tier', at, replayedMs: 20000 }, null, 'turn'])
+    assert.equal(await s.turns.ear(bad), null, JSON.stringify(bad));
+  const written = await lines();
+  assert.equal(written.length, 9); assert.ok(written.every(line => line.kind === 'ear' && !('id' in line) && !('audio' in line)));
+  assert.deepEqual(written.map(line => line.event), ['turn', 'tier', 'seal', 'pause', 'resume', 'off', 'socket', 'gate', 'gate']);
+  // A turn record beside them: the list and the summary hold turns only.
+  assert.equal((await s.post(turnRecord())).status, 201);
+  const listed = await (await fetch(s.base + '/turns')).json();
+  assert.deepEqual(listed.turns.map(turn => turn.id), [ID]);
+  assert.equal(Object.values(listed.summary.costPerDay).reduce((n, day) => n + day.turns, 0), 1);
+  assert.ok(!fsSync.readFileSync(path.join(s.pool.root, 'events', 'test-device', poolDay() + '.jsonl'), 'utf8').includes('"kind":"ear"'), 'ear lines stay in the hub\'s own log');
 });

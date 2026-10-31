@@ -207,3 +207,42 @@ buttons or interrupting things."
   alone. A button press or a hold always goes to the main stream, as today.
   Later: an on-device wake detector in the ear slot (nothing leaves the
   device until the name is heard).
+
+## 11. Yes and No: her boards' pictures, and the answer in full (dad, 10/31 evening)
+
+- Pictures. Yes and No show the pictures her other boards use: the nodding
+  head (library id 5583) and the shaking head (5525), the pair TD Snap draws
+  for yes and no. They stand on the corner tiles and on any Yes or No reply
+  in the middle. The check mark and the cross (5584, 5526) are no longer used
+  for yes and no. Only the ids in `public/chat/vocabulary.json` change.
+- The answer in full. For a yes-or-no question the local set still shows at
+  once (Yes, No, I'm not sure, Please say that again): nothing waits for a
+  model. In parallel the hub asks the reply model for the two answers in her
+  words, first person, six words at most ("Yes, I'm angry", "No, I'm not
+  angry"), plus at most one feeling or action word that the question is about,
+  from the vocabulary table (angry, happy, sad, tired, hungry, …) or none.
+  When it arrives (`yes-no-answered` on the session's events, generation and
+  window as for choices) the Yes and No replies in the middle take the full
+  phrase as label and words; their picture becomes the feeling's picture with
+  the nodding or shaking head as a small badge in a corner ("merge it when it
+  can be"); without a feeling word the head stays. The corner tiles keep their
+  look and their short labels and SPEAK the full phrase while this question is
+  open. Nothing changes under a reply she has already chosen (the selection
+  wins), and Clear, Back and a new question put the plain Yes and No back.
+  The reading aloud says the full phrases once they are on screen. Turn
+  record: `content.answered: true` when the full phrasing was on screen
+  before she chose; `answered` in `validateTurn`.
+- Partner's dialog: nothing new; the ids live in the table.
+
+## 12. What the ear heard (10/31 evening, after a question was lost)
+
+A question the partner asked in Listen mode went unanswered and no record
+could say why: the day's turn records hold only sealed questions. While test
+mode is on the hub appends ear records to the day's chat-turns log (`kind:
+'ear'`, one per event, private device data like every record): each ear
+turn's text and tier (cheap or main), tier changes and engagements with the
+replayed milliseconds, every seal with what the wake rule found, pause and
+resume with their reasons, off with its reason, socket losses, and the page's
+gate periods (each clip's start and end, and the other-page gate) posted by
+the page as `control {type:'gate', on, at}`. The partner dialog's diagnostics
+box shows the last twelve ear lines. Nothing is sent anywhere but the hub.

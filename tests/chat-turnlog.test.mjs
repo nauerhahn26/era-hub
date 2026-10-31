@@ -415,3 +415,18 @@ test('a wake-word turn is recorded with mode wake and content.wake (spec 2026-10
   const plain = JSON.parse(t.requests.find(r => r.url === '/chat/api/turns').init.body);
   assert.notEqual(plain.mode, 'room'); assert.equal('wake' in plain.content, false);
 });
+
+test('yes and no in full (spec 2026-10-28 §11): content.answered, and the answers\' reply usage when the turn had none', async () => {
+  const s = setup(), h = {};
+  s.log.begin(h, 'press', { mode: 'wake' });
+  s.log.usage(h, { reply: { model: 'reply-model', inputTokens: 300, cachedTokens: 0, outputTokens: 20 } });
+  s.log.usage(h, { reply: { model: 'other', inputTokens: 1, cachedTokens: 0, outputTokens: 1 } });
+  s.log.content(h, { answered: true, selected: { id: '1:0', label: "Yes, I'm hungry", say: "Yes, I'm hungry" } }); s.log.end(h, 'completed'); await flush();
+  const record = JSON.parse(s.requests.find(r => r.url === '/chat/api/turns').init.body);
+  assert.equal(record.content.answered, true); assert.equal(record.content.selected.label, "Yes, I'm hungry");
+  assert.deepEqual(record.usage.reply, { model: 'reply-model', inputTokens: 300, cachedTokens: 0, outputTokens: 20 }, 'the first usage stands');
+  const t = setup(), h2 = {};
+  t.log.begin(h2, 'press', {}); t.log.content(h2, { answered: 'yes' }); t.log.usage(h2, { reply: { inputTokens: -1 } }); t.log.end(h2, 'completed'); await flush();
+  const plain = JSON.parse(t.requests.find(r => r.url === '/chat/api/turns').init.body);
+  assert.equal('answered' in plain.content, false); assert.equal(plain.usage?.reply, undefined);
+});

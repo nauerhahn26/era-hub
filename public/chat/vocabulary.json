@@ -61,8 +61,8 @@
     "make a comment": "tell"
   },
   "concepts": [
-    {"word":"yes","id":5584,"alt":["yeah","yep","agree"],"altId":5583},
-    {"word":"no","id":5526,"alt":["nope","refuse","no thanks"],"altId":5525,"tone":"negative"},
+    {"word":"yes","id":5583,"alt":["yeah","yep","agree"]},
+    {"word":"no","id":5525,"alt":["nope","refuse","no thanks"],"tone":"negative"},
     {"word":"don't know","id":7180,"alt":["i don't know","no idea","dunno"],"tone":"negative"},
     {"word":"not sure","id":11696,"alt":["unsure","maybe","perhaps"],"tone":"negative"},
     {"word":"more","id":5508,"alt":["another","again please","extra"],"altId":26913},

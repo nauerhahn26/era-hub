@@ -34,6 +34,8 @@ const chatApi = require("./chat-api.js").createChatApi({ reportUsage: () => test
   // The ear's cost (§10): its idle time, and the saved switch turned off when it goes idle.
   wakeIdleMs: () => chatWake(DATA).chatWakeIdleMs, onWakeIdle: () => wakeModeOff(DATA),
   engageMs: () => chatWake(DATA).chatEngageMs, // the two tiers: how long the main stream stays on after a wake
+  // What the ear heard (§12): one line per ear event in the day's chat-turns log, kept only while test mode is on.
+  onEar: (record) => chatTurns.ear(record),
   people: () => drawings.charactersLibrary().people.filter((p) => !p.retired).map((p) => p.word),
   // Her world (chat-world.js): built below once DATA exists, read when an open question asks.
   world: () => chatWorld.digest(),

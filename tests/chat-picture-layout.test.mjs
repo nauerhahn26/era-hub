@@ -41,13 +41,13 @@ test('page pictures are planned fixed tiles first and never repeat: alternate, t
   assert.equal(plan[0].id, id('yes')); assert.equal(plan[2].id, id('no'));
   assert.equal(plan[1], null, 'the question strip never has a picture');
   assert.deepEqual(plan.slice(3, 10).map(item => item.word), ['think', 'remember', 'me', 'more', 'question', 'tell', 'something else']);
-  const yes = vocabulary.concepts.find(concept => concept.word === 'yes');
-  assert.equal(plan[10].id, yes.altId, 'a reply "Yes" yields the corner tile its picture and shows the alternate');
+  // Yes and No are her boards' pair (spec §11): a reply "Yes" shows the corner's nodding head too.
+  assert.equal(plan[10].id, id('yes'), 'a reply "Yes" shows the same yes picture as the corner');
   assert.equal(plan[11].id, id('music'));
   assert.equal(plan[12].id, id('chat'), 'a second music reply falls back to the bubble picture');
   assert.equal(plan[13], null, 'a third has no picture rather than a repeat');
-  const shown = plan.filter(Boolean).map(item => item.id);
-  assert.equal(new Set(shown).size, shown.length);
+  const shown = plan.filter((item, i) => item && i !== 10).map(item => item.id);
+  assert.equal(new Set(shown).size, shown.length, 'nothing else repeats');
   assert.equal(symbols.planPictures(entries, { variant: 'bw' })[11].src, `/symbol/${id('music')}?color=false`);
   assert.equal(symbols.planPictures(entries)[11].src, `/symbol/${id('music')}`);
   const emoji = symbols.planPictures([{ label: 'Home', type: 'response', symbol: 'home', symbolId: id('home') }, { label: 'Pizza', type: 'response', symbol: 'pizza', symbolId: id('pizza') }], { variant: 'emoji' });
@@ -200,7 +200,9 @@ test('the Chat page lays pictures out by board law and keeps every page free of 
     const strip = tiles.filter(tile => tile.type === 'question');
     assert.equal(strip.length, 1); assert.equal(strip[0].picture, null, 'the question strip has no picture');
     assert.equal(tiles.find(tile => tile.type === 'yes').symbol, 'yes'); assert.equal(tiles.find(tile => tile.type === 'no').symbol, 'no');
-    const shown = tiles.filter(tile => tile.picture).map(tile => tile.symbolId);
+    // Yes and No are her boards' pair (spec §11): a Yes or No reply shares the corner's head; nothing else repeats.
+    const pair = new Set([tiles.find(tile => tile.type === 'yes').symbolId, tiles.find(tile => tile.type === 'no').symbolId]);
+    const shown = tiles.filter(tile => tile.picture && !(tile.type === 'response' && pair.has(tile.symbolId))).map(tile => tile.symbolId);
     assert.equal(new Set(shown).size, shown.length, `${viewport}: no two tiles share a picture (${shown})`);
     for (const tile of tiles.filter(tile => tile.picture)) {
       assert.match(tile.picture.src || '', /^\/symbol\/\d+$/, tag(tile));
@@ -243,7 +245,7 @@ test('the Chat page lays pictures out by board law and keeps every page free of 
     const tiles = await measure(page);
     law(tiles, `${viewport.width} replies`);
     const responses = Object.fromEntries(tiles.filter(tile => tile.type === 'response').map(tile => [tile.text, tile]));
-    assert.equal(Number(responses.Yes.symbolId), vocabulary.concepts.find(concept => concept.word === 'yes').altId, 'the reply "Yes" shows the alternate yes picture');
+    assert.equal(Number(responses.Yes.symbolId), id('yes'), 'the reply "Yes" shows the nodding head, as the corner does (spec §11)');
     assert.equal(Number(responses['That one'].symbolId), id('pizza'), 'the hub pick reaches the tile');
     assert.ok(responses['Let me tell you another way'].stacked || responses['Let me tell you another way'].setAside, 'a long reply stacks, or sets a speck picture aside');
     assert.equal(responses['Tell me more'].symbolId === String(id('more')), false, 'the bottom row keeps "more"; the reply yields');

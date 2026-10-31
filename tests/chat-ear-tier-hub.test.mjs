@@ -246,3 +246,22 @@ test('server.js reads the engagement time from the device settings', async () =>
   const source = await fs.readFile(new URL('../server.js', import.meta.url), 'utf8');
   assert.match(source, /engageMs: \(\) => chatWake\(DATA\)\.chatEngageMs/);
 });
+
+test('ear records (spec §12): the ear tier\'s own turns, the engagement with the replayed milliseconds, the main stream\'s turns, back to the ear tier', async t => {
+  const clock = { now: 7000000 };
+  const records = [];
+  const service = await tieredService(t, { 'ear-model': { 50: [turn('ellie what')], 55: [ENDED('ellie what do you want')] },
+    'stream-model': { 21: [ENDED('Ellie, what do you want for lunch')] } });
+  const h = await hub(t, { service, env: EAR_ENV, clock: () => clock.now, limits: { windowTickMs: 10 }, extra: { engageMs: () => 30000, onEar: record => { records.push(record); } } });
+  const s = await h.session();
+  await s.open({ ear: true });
+  await play(s, service, clock, 1, 60);
+  await until(() => s.events('utterance-sealed').length === 1);
+  const of = event => records.filter(r => r.event === event);
+  assert.deepEqual(of('turn').map(r => [r.tier, r.text]), [['ear', 'ellie what do you want'], ['main', 'Ellie, what do you want for lunch']]);
+  assert.deepEqual(of('tier').map(r => [r.tier, r.replayedMs]), [['main', 2100]], 'frames 35..55 replayed: 2.1 s of audio');
+  assert.deepEqual(of('seal').map(r => r.wake), ['question', 'question'], 'the ear tier\'s seal woke the main stream; the main stream sealed the question');
+  clock.now += 31000;
+  await until(() => of('tier').length === 2);
+  assert.deepEqual(of('tier')[1].tier, 'ear'); assert.equal('replayedMs' in of('tier')[1], false);
+});

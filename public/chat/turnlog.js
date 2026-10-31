@@ -189,6 +189,7 @@ export function createTurnLog(options = {}) {
       if (patch.prompted === true) turn.content.prompted = true; // the options were read aloud (§6)
       if (patch.back === true) turn.content.back = true; // Back was used (maintainer 10/29)
       if (patch.wake === true) turn.content.wake = true; // a wake-word question (§8)
+      if (patch.answered === true) turn.content.answered = true; // Yes/No in full were on screen when she chose (§11)
       notify();
     },
     worker(handle, timings) {
@@ -198,8 +199,11 @@ export function createTurnLog(options = {}) {
         else if (key === 'firstPartialMs' && timings[key] === null) turn.worker[key] = null;
       }
     },
-    usage(handle, { voice, stream } = {}) {
+    usage(handle, { voice, stream, reply } = {}) {
       const turn = turns.get(handle); if (!turn) return;
+      // The answers in full of a yes-or-no question (§11): its local set had no reply model of its own.
+      if (!turn.reply && reply && ['inputTokens', 'cachedTokens', 'outputTokens'].every(key => Number.isSafeInteger(reply[key]) && reply[key] >= 0))
+        turn.reply = { model: typeof reply.model === 'string' ? reply.model.slice(0, 128) : null, inputTokens: reply.inputTokens, cachedTokens: reply.cachedTokens, outputTokens: reply.outputTokens };
       if (stream && typeof stream === 'object') {
         if (Number.isFinite(stream.socketSeconds) && stream.socketSeconds >= 0 && stream.socketSeconds <= 86400) turn.socketSeconds = Math.round(stream.socketSeconds * 1000) / 1000;
         if (Number.isSafeInteger(stream.keytermsFired) && stream.keytermsFired >= 0) turn.keytermsFired = Math.min(stream.keytermsFired, 100);

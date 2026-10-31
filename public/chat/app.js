@@ -3,7 +3,7 @@ import { createMicrophone } from './capture.js';
 import { createChatVoice } from './voice.js';
 import { createTurnMetrics } from './metrics.js';
 import { createChatStorage } from './storage.js';
-import { attachSymbol, resolveSymbol, loadVocabulary, hasVocabulary, planPictures, attachPicture } from './symbols.js';
+import { attachSymbol, resolveSymbol, loadVocabulary, hasVocabulary, planPictures, attachPicture, attachBadge, placeBadge } from './symbols.js';
 import { fitTile } from './tile-fit.js';
 import { GRID, fixedTiles, replyAreas, pageCells, paginate, BAR_BACK, backTarget, createBackStack } from './frame.js';
 import { createOptionsReader } from './prompt.js';
@@ -154,6 +154,10 @@ const SPOKEN = { yes: 'Yes.', no: 'No.', more: 'Tell me more.', else: 'Something
 // `made` the current turn's two sets, asked for in the background after a reveal.
 let page = null, pageOffset = 0, modeView = null;
 let made = { turn: -1, ask: null, comment: null, aborts: [] }, again = null, echoing = false;
+// Yes and No in full (spec 2026-10-28 §11): `answered` is { turn, ids, yes, no,
+// feeling } for the batch on screen (ids: its choice ids), or null; `pickedTurn`
+// the turn she already chose in (the selection wins: nothing changes after it).
+let answered = null, pickedTurn = -1;
 // The batches this session showed before the one on screen (Back restores them).
 const backStack = createBackStack(8);
 let shownChoices = [], shownQuestion = '', restoring = false, clearing = false;
@@ -166,11 +170,13 @@ const EAR_TAIL_MS = 150, gatedMedia = new WeakSet();
 // The tail covers the device's own audio path too: what plays reaches the
 // speaker, and the microphone's frames reach this page, a little late.
 const tailMs = () => EAR_TAIL_MS + Math.min(500, Math.round(mic?.latencyMs?.() || 0));
-function audioStarted() { clipsPlaying++; audioChannel?.postMessage({ from: PAGE_ID, playing: true }); }
+function audioStarted() { clipsPlaying++; audioChannel?.postMessage({ from: PAGE_ID, playing: true }); if (clipsPlaying === 1) gateMark('page', true); }
 function audioEnded() {
+  const was = clipsPlaying;
   clipsPlaying = Math.max(0, clipsPlaying - 1);
   gateUntil = Math.max(gateUntil, performance.now() + tailMs());
   if (!clipsPlaying) audioChannel?.postMessage({ from: PAGE_ID, playing: false, tailMs: tailMs() });
+  if (was && !clipsPlaying) gateMark('page', false);
 }
 // Another Chat page on this device (a relaunched kiosk, a second tab) plays her voice too.
 const PAGE_ID = Math.random().toString(36).slice(2), othersUntil = new Map();
@@ -179,7 +185,40 @@ if (audioChannel) audioChannel.onmessage = ({ data }) => {
   if (!data || data.from === PAGE_ID || typeof data.from !== 'string') return;
   // A page that stops answering mid-clip frees the ear after 30 s at most.
   othersUntil.set(data.from, performance.now() + (data.playing ? 30000 : Math.min(1000, Number(data.tailMs) || EAR_TAIL_MS)));
+  gateMark('other', data.playing === true);
 };
+// ---- what the ear heard (spec 2026-10-28 §12) ----
+// The gate's periods go to the hub as `control {type:'gate'}` while the ear
+// listens: on with the first clip, off when the last ends; an off followed by
+// an on within GATE_MERGE_MS (the reading's gaps, one clip cutting another) is
+// one period. `other`: another Chat page playing her voice.
+const GATE_MERGE_MS = 500;
+const gates = { page: { on: false, timer: null }, other: { on: false, timer: null } };
+function gateMark(source, on) {
+  const gate = gates[source];
+  if (on) {
+    if (gate.timer) { clearTimeout(gate.timer); gate.timer = null; return; }
+    if (!gate.on) { gate.on = true; sendGate(source, true); }
+    return;
+  }
+  if (!gate.on || gate.timer) return;
+  gate.timer = setTimeout(() => { gate.timer = null; gate.on = false; sendGate(source, false); }, GATE_MERGE_MS);
+}
+function sendGate(source, on) {
+  if (!ear || !session) return;
+  earLine(`gate ${on ? 'on' : 'off'}${source === 'other' ? ' (another page)' : ''}`);
+  void control('gate', { on, at: Math.round(performance.now() * 10) / 10, ...(source === 'other' ? { source } : {}) }).catch(() => null);
+}
+// The partner dialog's diagnostics box: the current line, then the last twelve ear lines.
+const earLines = [];
+let diagnosticLine = '';
+function earLine(text) {
+  const at = new Date(), two = n => String(n).padStart(2, '0');
+  earLines.push(`${two(at.getHours())}:${two(at.getMinutes())}:${two(at.getSeconds())} ear ${String(text).slice(0, 200)}`);
+  if (earLines.length > 12) earLines.shift();
+  paintDiagnostics();
+}
+function paintDiagnostics() { const box = document.getElementById('diagnostics'); if (box) box.textContent = [diagnosticLine, ...earLines].filter(Boolean).join('\n'); }
 let reader = null; // the options reader (public/chat/prompt.js), made once the voice exists
 // Reading the options aloud (spec 2026-10-28 §6): the device's delay (0 = off)
 // and her name, from /settings (chatPromptMs, chatName).
@@ -278,7 +317,7 @@ async function control(type, extra = {}) {
   if (Number.isFinite(reply.generation)) workerGeneration = Math.max(workerGeneration, reply.generation);
   return reply;
 }
-function diagnostic(text) { $('diagnostics').textContent = text; }
+function diagnostic(text) { diagnosticLine = text; paintDiagnostics(); }
 
 const controller = createChatController({
   onTiming: timingEvent,
@@ -370,7 +409,8 @@ reader = createOptionsReader({ delayMs: () => promptMs, name: () => herName,
 // microphone is open): the batch showing at the window's close arms then.
 function armReading(state) {
   if (state.phase !== 'Your turn' || !state.choices.length || page || modeView || holdActive() || windowOpen() || $('partnerDialog').open) return;
-  void reader.armed({ id: state.choices.map(choice => choice.id).join(','), items: state.choices.map(choice => ({ id: choice.id, label: choice.label })) });
+  // Each label is read as it is on screen when the reading reaches it (§11: the answers in full).
+  void reader.armed({ id: state.choices.map(choice => choice.id).join(','), items: state.choices.map(choice => ({ id: choice.id, get label() { return shownReply(choice).label; } })) });
 }
 // Any dwell progress or selection on a tile stops the reading at once.
 $('grid').addEventListener('dwell:activate', () => reader.cancel());
@@ -405,7 +445,7 @@ function tile(label, type, action, area, say, pick = {}) {
   // A glyph (a letter or a number) is its own picture: tile-fit.js draws it big.
   if (pick.glyph === true || pick.noPicture === true) return el;
   type = type.split(' ')[0];
-  if (hasVocabulary()) pictureOf.set(el, { label, type, say, symbol: pick.symbol, symbolId: pick.symbolId, picture: pick.picture });
+  if (hasVocabulary()) pictureOf.set(el, { label, type, say, symbol: pick.symbol, symbolId: pick.symbolId, picture: pick.picture, badge: pick.badge });
   else attachSymbol(el, { label, type, say });
   return el;
 }
@@ -424,10 +464,12 @@ function paintPictures(grid, turn) {
   const byLabel = new Map();
   entries.forEach((entry, i) => { const key = replyKey(entry); if (key !== null) byLabel.set(key, plan[i]); });
   if (byLabel.size || turn !== paintedReplies.turn) paintedReplies = { turn, byLabel };
-  tiles.forEach((el, i) => attachPicture(el, plan[i], fitTile));
+  tiles.forEach((el, i) => { attachPicture(el, plan[i], fit); attachBadge(el, plan[i] ? entries[i].badge : null, pictureVariant); });
 }
+// A tile's words and picture by board law, then a Yes/No head badge on its picture (§11).
+function fit(el) { fitTile(el); placeBadge(el); }
 function fitLabels() {
-  for (const el of $('grid').querySelectorAll('.tile')) fitTile(el);
+  for (const el of $('grid').querySelectorAll('.tile')) fit(el);
 }
 const capturing = state => state.phase === 'Capturing question';
 const waitingForReplies = state => ['Capturing question', 'Preparing'].includes(state.phase);
@@ -493,6 +535,7 @@ function toggleMode(kind) {
   gridKey = ''; renderGrid(controller.state);
 }
 function selectMade(item) {
+  pickedTurn = controller.state.turn;
   turnLog.content(questionMetric, { selected: item });
   timingEvent('selected');
   return controller.sayFixed(item.say);
@@ -501,6 +544,7 @@ function somethingElse() {
   const state = controller.state, turn = state.turn, question = state.question;
   const avoid = state.choices.map(choice => choice.say);
   void controller.sayFixed(SPOKEN.else);
+  dropAnswers();
   if (!question || !avoid.length) return;
   turnLog.content(questionMetric, { again: true });
   again?.abort(); const abort = again = new AbortController();
@@ -511,6 +555,72 @@ function somethingElse() {
     // The replaced batch redraws through the controller like any reveal (250 ms settle first).
     if (!controller.replace(result?.choices, turn)) modeView = previous;
   }).catch(() => { if (again === abort) again = null; });
+}
+
+// ---- Yes and No in full (spec 2026-10-28 §11) ----
+// The local Yes/No set shows at once; the hub's answers in full land later
+// (`yes-no-answered`) and change only the middle Yes and No, in place, unless
+// she has already chosen. The corners keep their look and speak the phrase.
+const answersOn = (state = controller.state) => !!answered && answered.turn === state.turn && !state.stale &&
+  answered.ids === state.choices.map(choice => choice.id).join(',');
+// A reply as it shows now: the batch's own, or a Yes or No in full with the
+// feeling's picture and the head badge (without a feeling the head stays).
+function shownReply(item) {
+  if (!answersOn()) return item;
+  const label = String(item.label || '').trim().toLowerCase().replace(/[.!]+$/, '');
+  const side = label === 'yes' ? 'yes' : label === 'no' ? 'no' : null;
+  if (!side) return item;
+  const phrase = answered[side];
+  return { ...item, label: phrase.label, say: phrase.say, ...(answered.feeling ? { symbol: phrase.symbol, symbolId: phrase.symbolId, badge: side } : { symbol: side, symbolId: undefined }) };
+}
+function sayCorner(side) {
+  const state = controller.state, full = answersOn(state) ? answered[side] : null;
+  if (state.choices.length && !state.stale) pickedTurn = state.turn;
+  if (full) turnLog.content(questionMetric, { answered: true });
+  return controller.sayFixed(full ? full.say : SPOKEN[side]);
+}
+function answerPhrase(value) {
+  if (!value || typeof value.label !== 'string' || typeof value.say !== 'string' || !value.label.trim() || !value.say.trim()) return null;
+  return { label: value.label.slice(0, 100), say: value.say.slice(0, 600),
+    ...(typeof value.symbol === 'string' && value.symbol.length <= 64 ? { symbol: value.symbol } : {}),
+    ...(Number.isSafeInteger(value.symbolId) && value.symbolId > 0 ? { symbolId: value.symbolId } : {}) };
+}
+function answeredEvent(data) {
+  const record = staging, state = controller.state;
+  if (!record || record.dropped || data.generation !== record.generation || record.sealed?.kind !== 'yes-no') return;
+  if ((record.seq ?? null) !== (data.seq ?? null) || (record.windowId && data.windowId !== record.windowId)) return;
+  if (pickedTurn === state.turn || state.stale || !state.choices.length || !['Your turn', 'Speaking'].includes(state.phase) || answersOn(state)) return;
+  const yes = answerPhrase(data.yes), no = answerPhrase(data.no);
+  if (!yes || !no) return;
+  const feeling = typeof data.feeling === 'string' && yes.symbolId && no.symbolId ? data.feeling : null;
+  record.answered = true;
+  answered = { turn: state.turn, ids: state.choices.map(choice => choice.id).join(','), yes, no, feeling };
+  if (data.usage) turnLog.usage(questionMetric, { reply: data.usage });
+  voice.prefetch([yes, no], { role: 'her' });
+  if (promptMs > 0) voice.prefetch([{ say: yes.label }, { say: no.label }], { role: 'helper' });
+  // In place: only the Yes and No tiles change; nothing else redraws under her gaze.
+  const grid = $('grid');
+  let changed = false;
+  for (const el of grid.querySelectorAll('.tile.response[data-choice-id]')) {
+    const item = state.choices.find(choice => choice.id === el.dataset.choiceId), shown = item && shownReply(item);
+    if (!shown || shown === item) continue;
+    el.querySelector('.label').textContent = shown.label;
+    if (hasVocabulary()) pictureOf.set(el, { label: shown.label, type: 'response', say: shown.say, symbol: shown.symbol, symbolId: shown.symbolId, picture: shown.picture, badge: shown.badge });
+    else attachSymbol(el, { label: shown.label, type: 'response', say: shown.say });
+    changed = true;
+  }
+  if (changed) { paintPictures(grid, state.turn); requestAnimationFrame(fitLabels); }
+}
+// Clear, Back and Something else put the plain Yes and No back (a new question
+// does by its new turn); the hub drops the answers still coming.
+function dropAnswers() {
+  // Only answers still coming are worth a word to the hub.
+  const coming = !!staging && staging.sealed?.kind === 'yes-no' && !staging.dropped && !staging.answered;
+  if (staging) staging.dropped = true;
+  const showing = answersOn();
+  answered = null;
+  if (coming && session) void control('drop').catch(() => {});
+  if (showing) { gridKey = ''; renderGrid(controller.state); }
 }
 
 // ---- the frame (spec 2026-10-28 §1) ----
@@ -557,8 +667,14 @@ function middle(state) {
     return areas.map((area, i) => {
       const item = inCell[i];
       if (!item) return tile('', 'waiting', null, area);
-      // The turn log records a pick only once select accepts it.
-      const el = tile(item.label, 'response', () => controller.select(item.id, selectedTurn, picked => turnLog.content(questionMetric, { selected: picked })), area, item.say, item);
+      // The turn log records a pick only once select accepts it. A Yes or No
+      // answered in full (§11) shows, speaks and records the words on the tile.
+      const shown = shownReply(item);
+      const el = tile(shown.label, 'response', () => {
+        const now = shownReply(item), full = now !== item;
+        controller.select(item.id, selectedTurn, picked => { pickedTurn = controller.state.turn;
+          turnLog.content(questionMetric, { selected: full ? { ...picked, label: now.label, say: now.say } : picked, ...(full ? { answered: true } : {}) }); }, now.say);
+      }, area, shown.say, shown);
       el.dataset.choiceId = item.id; el.dataset.cell = String(i);
       return el;
     });
@@ -582,7 +698,7 @@ function clearAvailable(state = controller.state) {
 function paintClear(state) { $('clearQuestion').disabled = !clearAvailable(state); }
 function clearQuestion() {
   if (!clearAvailable()) return;
-  reader?.cancel(); dropMade(); page = null; pageOffset = 0;
+  reader?.cancel(); dropMade(); dropAnswers(); page = null; pageOffset = 0;
   const state = controller.state;
   if (state.question || state.choices.length) {
     metrics.end(questionMetric, 'cancelled', 'superseded');
@@ -603,6 +719,7 @@ backButton.addEventListener('click', () => {
   turnLog.content(questionMetric, { back: true });
   if (target === 'page') { closePage(); return; }
   if (target === 'mode') { modeView = null; gridKey = ''; renderGrid(controller.state); return; }
+  dropAnswers();
   const batch = backStack.pop();
   restoring = true;
   try { if (!controller.restore(batch)) paintBack(controller.state); } finally { restoring = false; }
@@ -621,8 +738,8 @@ function renderGrid(state) {
   const grid = $('grid'); grid.replaceChildren();
   const fixed = Object.fromEntries(fixedTiles().map(item => [item.key, item]));
   // Fixed tiles first: they claim their pictures before any reply does.
-  grid.append(tile('yes', 'yes', () => controller.sayFixed(SPOKEN.yes), fixed.yes.area), stripTile(state),
-    tile('no', 'no', () => controller.sayFixed(SPOKEN.no), fixed.no.area));
+  grid.append(tile('yes', 'yes', () => sayCorner('yes'), fixed.yes.area), stripTile(state),
+    tile('no', 'no', () => sayCorner('no'), fixed.no.area));
   for (const key of ['questions', 'comments', 'about']) {
     const el = tile(fixed[key].label, `page${page === key ? ' on' : ''}`, () => openPage(key), fixed[key].area, fixed[key].label);
     el.dataset.page = key; grid.append(el);
@@ -650,7 +767,7 @@ controller.subscribe(state => {
     if (shownChoices.length && !restoring && !clearing) backStack.push({ question: shownQuestion, choices: shownChoices });
     shownChoices = state.choices; if (state.choices.length) shownQuestion = state.question;
   }
-  if (state.turn !== shownTurn) { shownTurn = state.turn; dropMade(); page = null; pageOffset = 0; }
+  if (state.turn !== shownTurn) { shownTurn = state.turn; dropMade(); page = null; pageOffset = 0; answered = null; }
   if (state.choices.length && state.question && made.turn !== state.turn) requestMade(state);
   document.body.dataset.phase = state.phase;
   document.body.dataset.replacing = String(state.replacing);
@@ -832,6 +949,7 @@ function receiveEvent(event) {
   if (data.type === 'ear' || (data.type === 'utterance-sealed' && data.ear === true)) { earEvent(data); return; }
   if (['window-open', 'utterance-sealed', 'window-closed'].includes(data.type) || (data.type === 'partial' && press?.generation === data.generation)) { windowEvent(data); return; }
   if (['choice-staged', 'batch-sealed', 'choices-error'].includes(data.type)) { stagingEvent(data); return; }
+  if (data.type === 'yes-no-answered') { answeredEvent(data); return; }
   if (['socket', 'settled', 'speculation'].includes(data.type)) {
     if (askPending || captureGeneration === null || data.generation !== captureGeneration) return;
     if (data.type === 'socket') turnLog.mark(questionMetric, 'socketConnect');
@@ -1174,6 +1292,9 @@ function earFrame(bytes) {
 // The hub's ear events (chat-api.js): listening (also resumed after a hold, with
 // the generation to send frames under), off with a reason, and a wake question.
 function earEvent(data) {
+  earLine(data.type === 'utterance-sealed' ? `question: ${String(data.windowText || '').slice(0, 120)}`
+    : data.state === 'tier' ? `tier ${data.tier}` : data.state === 'warning' ? `turns off in ${Math.round((Number(data.remainingMs) || 0) / 60000)} min`
+      : `${data.state}${data.reason ? ` (${data.reason})` : ''}${data.resumed ? ' (resumed)' : ''}`);
   if (data.type === 'utterance-sealed') { if (ear) earSealed(data); return; }
   if (data.state === 'listening') {
     if (!ear && !wakeMode) return;

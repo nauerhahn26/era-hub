@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { isLoopback } = require('./update.js');
 const { createChoicesAdapter } = require('./chat-choices.js');
-const { withSymbols, symbolRejected, pictureCandidates, createPictureWarmer } = require('./chat-symbols.js');
+const { withSymbols, symbolRejected, pictureCandidates, createPictureWarmer, conceptId } = require('./chat-symbols.js');
 const { acceptWebSocket, refuseUpgrade } = require('./chat-ws.js');
 const { createStreamTranscriber, streamSettings, loadKeyterms, keytermsFired } = require('./chat-stream.js');
 const { createKeepAliveFetch } = require('./keepalive-fetch.js');
@@ -569,6 +569,16 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   }
   const speculateMs = (() => { const value = Number(env.ERA_CHAT_SPECULATE_MS ?? 300); return Number.isFinite(value) && value >= 0 && value <= 5000 ? value : 300; })();
 
+  // What the ear heard (stable frame §12): one line per ear event to the hub's
+  // writer (server.js: chat-turns, kept only while test mode is on). Words
+  // capped at 300; a writer that fails never touches the ear.
+  const earSink = typeof options.onEar === 'function' ? options.onEar : null;
+  function earLog(session, event, fields = {}, ear = session.ear) {
+    if (!earSink) return;
+    const record = { event, at: clock(), ...(ear ? { earId: ear.id } : {}) };
+    for (const [key, value] of Object.entries(fields)) if (value !== undefined) record[key] = typeof value === 'string' ? value.slice(0, 300) : value;
+    try { Promise.resolve(earSink(record)).catch(() => {}); } catch { /* the ear listens on */ }
+  }
   function emit(session, event) {
     if (session.closed) return;
     const record = { ...event, at: clock(), elapsedMs: Math.max(0, clock() - session.created) };
@@ -660,7 +670,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
         } else if (event.type === 'error') {
           session.mode = 'paused';
           emit(session, { type: 'error', error: (event.error || event.message) === 'no_speech' ? 'no-speech' : 'runtime-error', generation: session.generation });
-          resumeEar(session);
+          resumeEar(session, 'error');
         } else if (event.type === 'wake') {
           if (session.mode !== 'armed') continue;
           session.mode = 'capturing'; session.utteranceBytes = 0;
@@ -668,11 +678,11 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
         } else {
           if (!['capturing', 'finishing'].includes(session.mode)) continue;
           const text = cleanText(event.text, 2000);
-          if (!text) { if (event.type === 'final') { session.mode = 'paused'; emit(session, { type: 'error', error: 'no-speech', generation: session.generation }); resumeEar(session); } continue; }
+          if (!text) { if (event.type === 'final') { session.mode = 'paused'; emit(session, { type: 'error', error: 'no-speech', generation: session.generation }); resumeEar(session, 'no-speech'); } continue; }
           if (event.type === 'final') { session.mode = 'paused'; if (session.turn) session.turn.done = true; }
           emit(session, { type: event.type, text, generation: session.generation,
             ...(event.type === 'final' ? { timings: safeTimings(event.timings), ...(session.staged ? { mode: 'one-shot' } : {}) } : {}) });
-          if (event.type === 'final') { choicesForFinal(session, text); resumeEar(session); } else warmSpoken(session, text);
+          if (event.type === 'final') { choicesForFinal(session, text); resumeEar(session, 'final'); } else warmSpoken(session, text);
         }
       }
     });
@@ -715,6 +725,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     // A window's utterance ended at the service (design §4.4): the machine seals it.
     stream.on('turn-end', ({ text }) => {
       const clean = cleanText(text, 2000);
+      if (current() && clean && session.turn.ear) earLog(session, 'turn', { tier: 'main', text: clean });
       if (current() && clean && session.turn.window && session.window) session.window.machine.turnEnd(clean);
     });
     stream.on('settled', ({ text }) => {
@@ -729,11 +740,11 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       const socketSeconds = stream.takeSocketSeconds();
       session.mode = 'paused';
       const clean = cleanText(text, 2000);
-      if (!clean) { emit(session, { type: 'error', error: 'no-speech', generation: session.generation }); resumeEar(session); return; }
+      if (!clean) { emit(session, { type: 'error', error: 'no-speech', generation: session.generation }); resumeEar(session, 'no-speech'); return; }
       emit(session, { type: 'final', text: clean, generation: session.generation, mode: 'stream', setting: index === 0 ? 'primary' : 'fallback', timings: safeTimings(timings),
         ...(reportUsage() ? { usage: { socketSeconds, keytermsFired: keytermsFired(clean, session.keyterms) } } : {}) });
       choicesForFinal(session, clean);
-      resumeEar(session);
+      resumeEar(session, 'final');
     });
     stream.on('error', ({ code, beforeAudio }) => {
       if (code === 'open-failed' && beforeAudio && streams[index + 1] && session.stream === stream) {
@@ -804,7 +815,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     session.generation++; session.mode = 'paused'; session.turnBytes = 0;
     write(session, { type: 'cancel' }).catch(() => {});
     if (error && active) emit(session, { type: 'error', error, generation: session.generation });
-    resumeEar(session);
+    resumeEar(session, 'cancel');
   }
   function forwardPcm(session, pcm) {
     write(session, { type: 'audio', pcm: pcm.toString('base64') }).catch(error => {
@@ -827,7 +838,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   function attachSocket(session, ws) {
     session.socket = ws; session.socketSeq = 0;
     const broken = (code, reason) => {
-      if (session.socket === ws) { session.socket = null; closeEar(session, 'socket'); if (['capturing', 'finishing'].includes(session.mode)) cancelTurn(session); }
+      if (session.socket === ws) { session.socket = null; if (session.ear) earLog(session, 'socket', { reason }); closeEar(session, 'socket'); if (['capturing', 'finishing'].includes(session.mode)) cancelTurn(session); }
       ws.close(code, reason);
     };
     ws.on('message', (data, binary) => {
@@ -851,6 +862,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     ws.on('close', () => {
       if (session.socket !== ws) return;
       session.socket = null;
+      if (session.ear) earLog(session, 'socket', { reason: 'closed' });
       closeEar(session, 'socket');
       if (['capturing', 'finishing'].includes(session.mode)) cancelTurn(session);
     });
@@ -993,8 +1005,30 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     job.sealed = true;
     emit(session, { type: 'batch-sealed', generation: job.generation, ...windowOf(job), ...job.result,
       ...(reportUsage() && job.pictures ? { pictureWarm: Math.min(job.pictures.count, 12) } : {}) });
+    if (job.result.kind === 'yes-no') answerYesNo(session, job);
+  }
+  // Yes and No in full (stable frame spec 2026-10-28 §11): after a yes-or-no
+  // question's local set is sealed (it never waits for this), one request for
+  // the two answers in her words and the feeling they are about. Built-in reply
+  // core only. Dropped with its job: a new question, a cancel, a close, or the
+  // page's `drop` (Something else, Clear, Back); an answer for anything but the
+  // job on screen is never emitted.
+  function answerYesNo(session, job) {
+    if (adapterUrl || !choicesCore.available) return;
+    job.answer = new AbortController();
+    const signal = AbortSignal.any([job.controller.signal, job.answer.signal, AbortSignal.timeout(limits.adapterMs)]);
+    const context = Array.isArray(session.context) && session.context.length ? session.context : undefined;
+    choicesCore.answerYesNo({ text: job.text, ...(context ? { context } : {}) }, { signal }).then(answer => {
+      if (signal.aborted || session.closed || session.choiceJob !== job || job.generation !== session.generation) return;
+      const id = answer.feeling ? conceptId(answer.feeling) : null, feeling = id ? answer.feeling : null;
+      const side = phrase => ({ label: phrase, say: phrase, ...(feeling ? { symbol: feeling, symbolId: id } : {}) });
+      emit(session, { type: 'yes-no-answered', generation: job.generation, ...windowOf(job), yes: side(answer.yes), no: side(answer.no), feeling,
+        ...(reportUsage() && cleanUsage(answer.usage) ? { usage: cleanUsage(answer.usage) } : {}) });
+    }, () => { /* the plain Yes and No stay */ });
   }
   function attachChoices(session, job) {
+    // A new question drops the answers in full still coming for the last one.
+    if (session.choiceJob && session.choiceJob !== job) session.choiceJob.answer?.abort();
     session.choiceJob = job; job.attached = true;
     for (const choice of job.staged) stageChoice(session, job, choice);
     if (job.done) sealChoices(session, job);
@@ -1002,7 +1036,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   function abortChoices(session) {
     const turn = session.turn;
     if (turn) { clearTimeout(turn.stableTimer); if (turn.speculation && !turn.speculation.attached) turn.speculation.controller.abort(); turn.speculation = null; }
-    if (session.choiceJob) { session.choiceJob.controller.abort(); session.choiceJob = null; }
+    if (session.choiceJob) { session.choiceJob.controller.abort(); session.choiceJob.answer?.abort(); session.choiceJob = null; }
   }
   // Speculation: a partial unchanged for ERA_CHAT_SPECULATE_MS (or words the
   // service says are settled) starts a hidden request on that text.
@@ -1097,7 +1131,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     if (session.turn && session.turn.window) endStreamTurn(session);
     session.mode = 'paused'; session.turnBytes = 0;
     emit(session, { type: 'window-closed', windowId: win.id, reason, seals, generation: win.generation });
-    resumeEar(session);
+    resumeEar(session, 'window');
   }
   function openWindowOf() {
     // An ear is never pressed: the button's second press and cancel belong to a button window.
@@ -1147,6 +1181,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
         ear.tier = 'ear'; session.ring = [];
         startEarTurn(session, ear);
         emit(session, { type: 'ear', state: 'tier', tier: 'ear', earId: ear.id, generation: session.generation });
+        earLog(session, 'tier', { tier: 'ear' });
         return;
       }
     }
@@ -1177,13 +1212,15 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     clearInterval(win.timer); session.window = null; win.ear.paused = true; win.ear.pendingAt = null; earActive(win.ear);
     if (session.turn && session.turn.ear) endStreamTurn(session);
     emit(session, { type: 'ear', state: 'off', reason, earId: win.ear.id, generation: session.generation });
+    earLog(session, 'pause', { reason });
   }
-  function resumeEar(session) {
+  function resumeEar(session, reason = 'resume') {
     const ear = session.ear;
     if (!ear || !ear.paused || session.window || session.closed || session.controlling || ['capturing', 'finishing'].includes(session.mode)) return;
     ear.paused = false; earActive(ear);
     startEarTurn(session, ear);
     emit(session, { type: 'ear', state: 'listening', tier: ear.tier, earId: ear.id, generation: session.generation, resumed: true });
+    earLog(session, 'resume', { reason });
   }
   function closeEar(session, reason) {
     const ear = session.ear;
@@ -1196,6 +1233,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       session.mode = 'paused'; session.turnBytes = 0;
     }
     emit(session, { type: 'ear', state: 'off', reason, earId: ear.id, generation: session.generation });
+    earLog(session, 'off', { reason }, ear);
   }
   // The ear tier's own stream: its words feed the ear's machine only.
   function earStreamOf(session) {
@@ -1211,7 +1249,10 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       if (session.ear && session.ear.utteranceAt === null) session.ear.utteranceAt = clock();
       session.window.machine.partial(clean);
     });
-    stream.on('turn-end', ({ text }) => { const clean = cleanText(text, 2000); if (live() && clean) session.window.machine.turnEnd(clean); });
+    stream.on('turn-end', ({ text }) => {
+      const clean = cleanText(text, 2000);
+      if (live() && clean) { earLog(session, 'turn', { tier: 'ear', text: clean }); session.window.machine.turnEnd(clean); }
+    });
     stream.on('error', () => { if (live()) closeEar(session, 'error'); });
     return stream;
   }
@@ -1231,13 +1272,17 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     ear.tier = 'main'; ear.wakeAt = now; earActive(ear);
     startEarTurn(session, ear);
     emit(session, { type: 'ear', state: 'tier', tier: 'main', earId: ear.id, generation: session.generation });
+    // The replayed audio's length (16 kHz PCM16: 32 bytes a millisecond).
+    earLog(session, 'tier', { tier: 'main', replayedMs: Math.min(10000, Math.round(replay.reduce((n, pcm) => n + pcm.length, 0) / 32)) });
     for (const pcm of replay) acceptPcm(session, pcm);
   }
   function earSeal(session, win, { text, reason }) {
     if (session.window !== win || session.closed) return;
     const ear = win.ear, now = clock();
     const found = wakeQuestion(text, wakeName());
+    const sealed = fields => earLog(session, 'seal', { tier: ear.tier, text, wake: found ? (found.question ? 'question' : 'name') : 'none', ...fields });
     if (earProfile && ear.tier === 'ear') {
+      sealed();
       // The ear tier only wakes the main stream; the question is sealed there.
       if (found) { engage(session, win, ear); return; }
       ear.utteranceAt = null;
@@ -1253,6 +1298,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     if (found && found.question) question = found.question;
     else if (found) ear.pendingAt = now;
     else if (ear.pendingAt !== null && now - ear.pendingAt <= limits.earWakeMs) question = cleanText(text, 2000);
+    sealed({ question: question || undefined });
     if (question) {
       ear.pendingAt = null; earActive(ear);
       const id = randomBytes(6).toString('hex');
@@ -1372,9 +1418,17 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     }
     if (req.method === 'POST' && match[2] === 'control') {
       const body = await readJson(req, limits.bodyBytes);
-      if (!['arm', 'ask', 'finish', 'cancel', 'pause', 'close', 'window', 'pick'].includes(body.type) ||
+      if (!['arm', 'ask', 'finish', 'cancel', 'pause', 'close', 'window', 'pick', 'drop', 'gate'].includes(body.type) ||
+        (body.type === 'gate' && (typeof body.on !== 'boolean' || !Number.isFinite(body.at) || body.at < 0 || ![undefined, 'page', 'other'].includes(body.source))) ||
         (body.type === 'arm' && typeof body.enabled !== 'boolean') ||
         (body.type === 'window' && body.ear !== undefined && typeof body.ear !== 'boolean')) throw fault(400, 'invalid-control');
+      // The page put the plain Yes and No back (§11): the answers in full still coming go; nothing else changes.
+      if (body.type === 'drop') { session.choiceJob?.answer?.abort(); return json(res, 200, { ok: true, generation: session.generation }); }
+      // The page's gate (§12): its clips (or another Chat page's) start or end while the ear listens. A line, nothing else.
+      if (body.type === 'gate') {
+        if (session.ear) earLog(session, 'gate', { on: body.on, source: body.source || 'page', pageAt: Math.round(body.at * 10) / 10 });
+        return json(res, 200, { ok: true, generation: session.generation });
+      }
       // The wake word's ear (stable frame §8): on with ear:true, off with ear:false.
       if (body.type === 'window' && body.ear !== undefined) {
         if (!body.ear) { closeEar(session, 'off'); return json(res, 200, { ok: true, generation: session.generation }); }
@@ -1390,7 +1444,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       }
       session.controlling = true;
       try { return await control(session, body, res); }
-      finally { session.controlling = false; resumeEar(session); }
+      finally { session.controlling = false; resumeEar(session, 'control'); }
     }
     if (req.method === 'POST' && match[2] === 'audio') {
       if (!String(req.headers['content-type'] || '').toLowerCase().startsWith('application/octet-stream')) throw fault(415, 'pcm-required');

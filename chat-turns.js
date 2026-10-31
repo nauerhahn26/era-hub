@@ -77,13 +77,29 @@ const RECORD = shape({
     // The options were read aloud after a silence (§6).
     prompted: v => v === true, back: v => v === true,
     // A question heard by the wake word (§8).
-    wake: v => v === true }),
+    wake: v => v === true,
+    // Yes and No in full were on screen when she chose (stable frame §11).
+    answered: v => v === true }),
   usage: shape({ reply: shape({ model: nullable(str(128)), inputTokens: int(), cachedTokens: int(), outputTokens: int() }),
     audioSeconds: num(3600), socketSeconds: nullable(num(86400)),
     voice: shape({ chars: int(10000), cache: oneOf(['hit', 'pending', 'miss', 'device']), fetchedChars: int(100000) }) }),
   health: shape({ release: health, reveal: health }),
   mic: shape({ peakRms: num(1), clipped: int(), frames: int() }, ['peakRms', 'clipped', 'frames']),
 }, ['version', 'id', 'kind', 'mode', 'startedAt', 'outcome', 'stages']);
+
+// What the ear heard (stable frame spec 2026-10-28 §12): one line per ear
+// event, beside the turn records in the day's log. No id (the turn tools skip
+// it), no audio, the words capped at 300 characters.
+const EAR_EVENTS = ['turn', 'tier', 'seal', 'pause', 'resume', 'off', 'socket', 'gate'];
+const EAR = shape({ event: oneOf(EAR_EVENTS), at: num(Number.MAX_SAFE_INTEGER), earId: str(32, /^[0-9a-f]+$/), tier: oneOf(['ear', 'main']),
+  text: str(300), wake: oneOf(['question', 'name', 'none']), question: str(300), reason: str(32, /^[a-z][a-z-]*$/), replayedMs: int(10000),
+  on: v => typeof v === 'boolean', source: oneOf(['page', 'other']), pageAt: num(Number.MAX_SAFE_INTEGER) }, ['event', 'at']);
+const earWords = v => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 300) : v);
+function validateEar(value) {
+  if (!isObject(value)) return null;
+  const record = { ...value, ...('text' in value ? { text: earWords(value.text) } : {}), ...('question' in value ? { question: earWords(value.question) } : {}) };
+  return EAR(record) ? record : null;
+}
 
 function fault(status, code) { return Object.assign(new Error(code), { status, code }); }
 function validateTurn(value) {
@@ -448,6 +464,25 @@ function createChatTurns(options = {}) {
     try { pool?.append('chat-turn', { turn: stamped }); } catch { /* history is nice-to-have */ }
     return stamped;
   }
+  // One ear line (§12), only while test mode is on; never throws into the hub.
+  async function ear(value) {
+    try {
+      if (!enabled()) return null;
+      const valid = validateEar(value);
+      if (!valid) return null;
+      const now = new Date(clock());
+      const stamped = { kind: 'ear', ...valid, at: new Date(valid.at).toISOString(), day: localDay(now), build: build() || null, device: options.deviceId || null };
+      const line = JSON.stringify(stamped) + '\n';
+      await serial(async () => {
+        const file = path.join(logDir, stamped.day + '.jsonl');
+        await fsp.mkdir(logDir, { recursive: true });
+        const size = await fsp.stat(file).then(s => s.size, () => 0);
+        if (size + Buffer.byteLength(line) > limits.dayBytes) throw fault(507, 'turn-log-full');
+        await fsp.appendFile(file, line);
+      });
+      return stamped;
+    } catch { return null; }
+  }
   async function dayFiles() {
     try { return (await fsp.readdir(logDir)).filter(name => /^\d{4}-\d\d-\d\d\.jsonl$/.test(name)).sort(); }
     catch { return []; }
@@ -458,7 +493,8 @@ function createChatTurns(options = {}) {
       let text = '';
       try { text = await fsp.readFile(path.join(logDir, name), 'utf8'); } catch { continue; }
       const lines = text.split('\n').filter(Boolean);
-      for (let i = lines.length - 1; i >= 0 && out.length < count; i--) { try { out.push(JSON.parse(lines[i])); } catch {} }
+      // The ear's lines (§12) are read in the file itself, never listed or summed as turns.
+      for (let i = lines.length - 1; i >= 0 && out.length < count; i--) { try { const value = JSON.parse(lines[i]); if (value?.kind !== 'ear') out.push(value); } catch {} }
       if (out.length >= count) break;
     }
     return out.reverse();
@@ -588,7 +624,7 @@ function createChatTurns(options = {}) {
       route(req, res, routePath).catch(error => json(res, error.status || 500, { error: error.status ? error.code : 'turns-error' }));
       return true;
     },
-    record, health, knowsTurn,
+    record, ear, health, knowsTurn,
     lagActive() { return lagTimer !== null; },
     close() { stopLag(); },
   };
