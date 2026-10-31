@@ -94,8 +94,22 @@ test("both files together fill both roles", () => {
     "tts-config.json": { apiKey: TKEY, voiceId: "EXAVITQu4vr4xnSDxMaL", keyOk: true } });
   const r = aiRoles(dir);
   assert.deepEqual(r.vision, { provider: "google", apiKey: VKEY });
+  // her voice (voiceId) is not the narrator: books are read by the helper
+  // voice, Jessica unless the Voice card chose another (10/31)
   assert.deepEqual(r.elevenlabs,
-    { apiKey: TKEY, voiceId: "EXAVITQu4vr4xnSDxMaL", modelId: "eleven_flash_v2_5" });
+    { apiKey: TKEY, voiceId: "cgSgspJ2msm6clMCkdW9", modelId: "eleven_flash_v2_5" });
+});
+
+test("books are read by the helper voice the Voice card chose, never by her voice (10/31)", () => {
+  const dir = dataDir({ "tts-config.json": {
+    apiKey: TKEY, voiceId: "cVd39cx0VtXNC13y5Y7z", helperVoiceId: "EXAVITQu4vr4xnSDxMaL", keyOk: true } });
+  assert.equal(aiRoles(dir).elevenlabs.voiceId, "EXAVITQu4vr4xnSDxMaL");
+  // no helper chosen: Jessica, even though her voice is something else
+  const dir2 = dataDir({ "tts-config.json": { apiKey: TKEY, voiceId: "cVd39cx0VtXNC13y5Y7z", keyOk: true } });
+  assert.equal(aiRoles(dir2).elevenlabs.voiceId, "cgSgspJ2msm6clMCkdW9");
+  // a blank helper is an empty box, not a choice
+  const dir3 = dataDir({ "tts-config.json": { apiKey: TKEY, voiceId: "cVd39cx0VtXNC13y5Y7z", helperVoiceId: "  " } });
+  assert.equal(aiRoles(dir3).elevenlabs.voiceId, "cgSgspJ2msm6clMCkdW9");
 });
 
 test("an empty <DATA> is every role null, not a throw", () => {
@@ -135,7 +149,7 @@ test("a key not verified yet still counts (server.js's own enabled rule)", () =>
   const dir = dataDir({ "tts-config.json": { apiKey: TKEY } });
   const r = aiRoles(dir);
   assert.equal(r.elevenlabs.apiKey, TKEY);
-  // no voice chosen yet -> the same default voice the Voice card shows first
+  // no helper voice chosen yet -> the same default helper the Voice card shows
   assert.equal(r.elevenlabs.voiceId, "cgSgspJ2msm6clMCkdW9");
   // and the same model it shows first (server.js loadTtsCfg). The role used to
   // carry no model at all, so the narrate step fell through to a default of its

@@ -30,8 +30,9 @@ const path = require("path");
 // else on disk reads as the free default rather than failing the whole role.
 const VISION_PROVIDERS = ["anthropic", "openai", "google"];
 const DEFAULT_VISION_PROVIDER = "google";
-// Same voice the Voice card offers first (CURATED_VOICES[0] in server.js), so
-// a family that saved a key but never picked a voice still gets narration.
+// The helper voice a device has when none was chosen (DEFAULT_HELPER_VOICE_ID
+// in server.js), so a family that saved a key but never picked one still gets
+// narration.
 const DEFAULT_VOICE_ID = "cgSgspJ2msm6clMCkdW9";
 // And the same MODEL the Voice card defaults to — server.js's loadTtsCfg()
 // starts every card at eleven_flash_v2_5, and the board's chat has been speaking
@@ -94,7 +95,9 @@ function elevenRole(dir) {
   // key at all — exactly what /voices reports to the Voice card. keyOk
   // undefined (never verified, or set from the environment) still counts.
   if (!apiKey || cfg.keyOk === false) return null;
-  return { apiKey, voiceId: key(cfg.voiceId) || DEFAULT_VOICE_ID,
+  // Books are read by the helper voice, not by her voice (10/31): voiceId is
+  // what she says in Chat, helperVoiceId is everything read to her.
+  return { apiKey, voiceId: key(cfg.helperVoiceId) || DEFAULT_VOICE_ID,
            modelId: key(cfg.modelId) || DEFAULT_MODEL_ID };
 }
 

@@ -1373,12 +1373,18 @@ async function serveSymbol(res, name, bw = false) {
 // Key: put ELEVENLABS_API_KEY=... in tts-config.json ("apiKey") or the environment.
 const TTS_CFG_PATH = path.join(DATA, "tts-config.json");
 const CURATED_VOICES = [
+  { id: "cVd39cx0VtXNC13y5Y7z", name: "Hope — young and warm" }, // the default since 10/29 (the maintainer's choice)
   { id: "cgSgspJ2msm6clMCkdW9", name: "Jessica — playful American" },
   { id: "EXAVITQu4vr4xnSDxMaL", name: "Sarah — soft & warm" },
   { id: "21m00Tcm4TlvDq8ikWAM", name: "Rachel — calm narrator" },
   { id: "XrExE9yKIg1WjnnlVkGX", name: "Matilda — friendly" },
   { id: "pFZP5JQG7iQjIQuC4Bku", name: "Lily — warm British" }
 ];
+// Two voice roles (spec 2026-10-31 §3.2): "her" is what she says (voiceId),
+// "helper" is everything else - questions, choices read aloud, games, books
+// (helperVoiceId, this one when the file names none).
+const DEFAULT_HELPER_VOICE_ID = "cgSgspJ2msm6clMCkdW9";
+const VOICE_ROLES = ["her", "helper"];
 // ERA_ELEVEN_URL: a stand-in for the tests, like ERA_RESEND_URL (bug 14: the
 // key-check must be proven against a server that says no).
 const ELEVEN_URL = process.env.ERA_ELEVEN_URL || "https://api.elevenlabs.io";
@@ -1474,6 +1480,7 @@ function loadTtsCfg() {
               modelId: "eleven_flash_v2_5" };
   try { cfg = { ...cfg, ...JSON.parse(fs.readFileSync(TTS_CFG_PATH, "utf8")) }; } catch {}
   if (!cfg.apiKey && process.env.ELEVENLABS_API_KEY) cfg.apiKey = process.env.ELEVENLABS_API_KEY;
+  if (typeof cfg.helperVoiceId !== "string" || !cfg.helperVoiceId.trim()) cfg.helperVoiceId = DEFAULT_HELPER_VOICE_ID;
   return cfg;
 }
 function saveTtsCfg(cfg) { fs.writeFileSync(TTS_CFG_PATH, JSON.stringify(cfg, null, 2)); }
@@ -1487,8 +1494,9 @@ function responseVoiceSpeed() {
   } catch {}
   return RESPONSE_VOICE_SPEED;
 }
-function ttsCacheFile(cfg, speed, text) {
-  const key = crypto.createHash("sha1").update(cfg.voiceId + "|" + cfg.modelId + "|" + speed + "|" + text).digest("hex");
+// keyed on the voice that actually speaks, so one sentence in two roles is two clips
+function ttsCacheFile(voiceId, cfg, speed, text) {
+  const key = crypto.createHash("sha1").update(voiceId + "|" + cfg.modelId + "|" + speed + "|" + text).digest("hex");
   return path.join(TTS_CACHE, key + ".mp3");
 }
 // The saved voice's connection stays warm for the hub's lifetime (spec
@@ -1496,10 +1504,11 @@ function ttsCacheFile(cfg, speed, text) {
 // arrive and caches the whole clip when it is complete (tts-stream.js).
 const voiceFetch = require("./keepalive-fetch.js").createKeepAliveFetch();
 const { streamSpeech } = require("./tts-stream.js");
-function streamTts(cfg, text, res) {
+function streamTts(cfg, text, res, role = "her") {
   const speed = responseVoiceSpeed();
-  return streamSpeech({ fetch: voiceFetch, cacheFile: ttsCacheFile(cfg, speed, text), res,
-    url: ELEVEN_URL + "/v1/text-to-speech/" + cfg.voiceId + "/stream?output_format=mp3_22050_32",
+  const voiceId = role === "helper" ? cfg.helperVoiceId : cfg.voiceId;
+  return streamSpeech({ fetch: voiceFetch, cacheFile: ttsCacheFile(voiceId, cfg, speed, text), res,
+    url: ELEVEN_URL + "/v1/text-to-speech/" + voiceId + "/stream?output_format=mp3_22050_32",
     headers: { "xi-api-key": cfg.apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({ text, model_id: cfg.modelId, voice_settings: { stability: 0.5, similarity_boost: 0.75, speed } }) });
 }
@@ -1993,7 +2002,7 @@ const server = http.createServer((req, res) => {
       if (Array.isArray(lex)) s.personalWords = lex.map(w => typeof w === "string" ? w : w.word).filter(Boolean);
     } catch {}
     try { s = { ...s, ...JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8")) }; } catch {}
-    s.voiceId = loadTtsCfg().voiceId;
+    { const tts = loadTtsCfg(); s.voiceId = tts.voiceId; s.helperVoiceId = tts.helperVoiceId; }
     Object.assign(s, chatLists(DATA)); // a hand-edited list that is not clean reads as its default
     Object.assign(s, chatPrompt(DATA)); // chatPromptMs and chatName (stable frame §6), the same way
     s.responseVoiceSpeed = responseVoiceSpeed();
@@ -2175,6 +2184,9 @@ const server = http.createServer((req, res) => {
         if (inc.voiceId && CURATED_VOICES.some(v => v.id === inc.voiceId)) {
           const cfg = loadTtsCfg(); cfg.voiceId = inc.voiceId; saveTtsCfg(cfg);
         }
+        if (inc.helperVoiceId && CURATED_VOICES.some(v => v.id === inc.helperVoiceId)) {
+          const cfg = loadTtsCfg(); cfg.helperVoiceId = inc.helperVoiceId; saveTtsCfg(cfg);
+        }
         res.writeHead(204, { "Access-Control-Allow-Origin": "*" }).end();
       } catch { res.writeHead(400).end(); }
     });
@@ -2231,7 +2243,7 @@ const server = http.createServer((req, res) => {
     // out loud (QA 9/1). cfg.keyOk is set when the key is saved/verified.
     res.end(JSON.stringify({ enabled: !!cfg.apiKey && cfg.keyOk !== false,
       keyPresent: !!cfg.apiKey, keyOk: cfg.keyOk === true,
-      keyError: cfg.keyError || "", current: cfg.voiceId, voices: CURATED_VOICES }));
+      keyError: cfg.keyError || "", current: cfg.voiceId, helper: cfg.helperVoiceId, voices: CURATED_VOICES }));
     return;
   }
   if (req.method === "POST" && req.url === "/voice") {
@@ -2252,10 +2264,14 @@ const server = http.createServer((req, res) => {
     req.on("data", c => { body += c; if (body.length > 8192) req.destroy(); });
     req.on("end", async () => {
       try {
-        const { text } = JSON.parse(body);
+        const { text, voice } = JSON.parse(body);
+        // no role is her voice (every caller from before the roles); a role
+        // this hub does not know is refused before the voice service is asked
+        const role = voice === undefined ? "her" : voice;
+        if (!VOICE_ROLES.includes(role)) { res.writeHead(400).end(); return; }
         const cfg = loadTtsCfg();
         if (!cfg.apiKey || !text || text.length > 600) { res.writeHead(503).end(); return; }
-        await streamTts(cfg, String(text), res);
+        await streamTts(cfg, String(text), res, role);
       } catch (e) { if (!res.headersSent) res.writeHead(502).end(); else res.destroy(); }
     });
     return;
