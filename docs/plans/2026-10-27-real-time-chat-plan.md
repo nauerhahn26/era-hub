@@ -595,3 +595,23 @@ the press tones and other Chat pages (broadcast channel), with a tail that
 adds the device's audio latency (088748f); the exact bypass on the device
 was not reproduced (device-voice early end or a second Chat page are the
 candidates). Gate 206/0.
+
+## Clear, auto-off, quiet notices, two-tier ear (10/31) — LANDED 6218864 + e362cf3, v1.0.41
+- [x] Partner Clear in the top bar (696ffd5, 94edc8a).
+- [x] Ear auto-off after chatWakeIdleMs (default 30 min) with status-line
+      notices at 2 and 1 minutes, no countdown; chatWakeMode set false on
+      idle-off (f6912d5, f668552). Test-mode and room-audio banners removed;
+      the dialog section is "Session records".
+- [x] Two tiers: ERA_CHAT_STREAM_EAR_MODEL (private) puts the ear on a
+      cheaper profile; 10 s ring buffer replayed to the main stream on a wake
+      (from 1.5 s before the utterance's first words); back to the ear tier
+      after chatEngageMs (default 2 min) without a wake; holds/presses always
+      main (f04295b, b66f421; suite chat-ear-tier-hub). Gate 207/0.
+Cost study (10/31 morning, 13 min, 27 wakes): model ≈ $0.08/meal (92% of
+input cached), ear ≈ $0.10/meal on the pro realtime tier ($0.45/hr, billed
+per socket minute, idle included), voice within the plan; 3–5 meals/day ≈
+$20–27/month at list prices; an ear left on all day would be $324/month,
+hence auto-off. Private price table written on both devices
+(chat-prices.json) so the session panel shows cost per day.
+Next: an on-device wake detector in the ear slot (zero idle cost; needs an
+"Ellie" model trained from samples; dad's family recordings = validation).
