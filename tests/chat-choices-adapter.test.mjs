@@ -363,3 +363,36 @@ test('a mode skips the partner-incident shortcut; comments get the recall check,
   const owned = await run({ choices: [{ label: 'Mine', say: 'I lost my drawing too.' }, { label: 'Look', say: 'Where did you look?' }] }, { text: 'I lost my drawing.', mode: 'ask' });
   assert.equal(owned.kind, 'guarded', 'ownership is never changed');
 });
+
+// Yes and No in full (spec 2026-10-28 §11): one small request beside the local
+// yes/no set, answered as { yes, no, feeling }; checked strictly or dropped.
+const answered = value => response(value);
+test('yes and no in full: the request carries the question, the context and the feeling list; the instructions keep her words', async () => {
+  const bodies = [];
+  const adapter = createChoicesAdapter({ env, fetch: async (_, options) => { bodies.push(JSON.parse(options.body)); return answered({ yes: "Yes, I'm hungry", no: "No, I'm not hungry", feeling: 'hungry' }); } });
+  const result = await adapter.answerYesNo({ text: 'Are you hungry?', context: ['Me: Hi!'] });
+  assert.deepEqual([result.yes, result.no, result.feeling], ["Yes, I'm hungry", "No, I'm not hungry", 'hungry']);
+  const body = bodies[0], input = JSON.parse(body.input);
+  assert.equal(body.store, false); assert.equal(body.text.format.strict, true); assert.equal(body.text.format.name, 'yes_no');
+  assert.deepEqual(Object.keys(body.text.format.schema.properties), ['yes', 'no', 'feeling']);
+  assert.deepEqual([input.question, input.context], ['Are you hungry?', ['Me: Hi!']]);
+  for (const word of ['angry', 'happy', 'sad', 'tired', 'hungry', 'thirsty', 'scared', 'sick', 'hurt', 'bored', 'excited', 'cold', 'hot', 'silly', 'worried'])
+    assert.ok(input.feelings.includes(word), word);
+  assert.deepEqual(body.text.format.schema.properties.feeling.enum, [...input.feelings, 'none'], 'the list the model is given is the list it may answer from');
+  assert.match(body.instructions, /yes and no in full/i); assert.match(body.instructions, /six words/i);
+  assert.match(body.instructions, /the question itself asks about/i);
+  assert.ok(!JSON.stringify(result).includes('private-value'));
+});
+
+test('yes and no in full are checked strictly: Yes/No first, six words, her words only; a feeling outside the list is dropped', async () => {
+  const run = value => createChoicesAdapter({ env, fetch: async () => answered(value) }).answerYesNo({ text: 'Are you angry?' });
+  assert.equal((await run({ yes: "Yes, I'm angry", no: "No, I'm not angry", feeling: 'grumpy' })).feeling, null, 'not in the list: no feeling');
+  assert.equal((await run({ yes: "Yes, I'm angry", no: "No, I'm not angry", feeling: 'none' })).feeling, null);
+  for (const bad of [{ yes: "I'm angry", no: "No, I'm not angry", feeling: 'angry' }, { yes: "Yes, I'm angry", no: "I'm fine", feeling: 'none' },
+    { yes: 'Yes, I am very very angry today', no: 'No', feeling: 'none' }, { yes: '', no: 'No', feeling: 'none' }, { yes: 'Yes <b>', no: 'No', feeling: 'none' },
+    { yes: 'Yes', no: 'No', feeling: 'none', extra: 1 }, { yes: 'Yes', feeling: 'none' }, { choices: [] }])
+    await assert.rejects(run(bad), /invalid/, JSON.stringify(bad));
+  const plain = await run({ yes: 'Yes.', no: 'No.', feeling: 'none' });
+  assert.deepEqual([plain.yes, plain.no], ['Yes.', 'No.']);
+  await assert.rejects(createChoicesAdapter({ env: {}, fetch: () => { throw Error('must not call'); } }).answerYesNo({ text: 'Are you angry?' }), /unavailable/);
+});

@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { isLoopback } = require('./update.js');
 const { createChoicesAdapter } = require('./chat-choices.js');
-const { withSymbols, symbolRejected, pictureCandidates, createPictureWarmer } = require('./chat-symbols.js');
+const { withSymbols, symbolRejected, pictureCandidates, createPictureWarmer, conceptId } = require('./chat-symbols.js');
 const { acceptWebSocket, refuseUpgrade } = require('./chat-ws.js');
 const { createStreamTranscriber, streamSettings, loadKeyterms, keytermsFired } = require('./chat-stream.js');
 const { createKeepAliveFetch } = require('./keepalive-fetch.js');
@@ -993,8 +993,30 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     job.sealed = true;
     emit(session, { type: 'batch-sealed', generation: job.generation, ...windowOf(job), ...job.result,
       ...(reportUsage() && job.pictures ? { pictureWarm: Math.min(job.pictures.count, 12) } : {}) });
+    if (job.result.kind === 'yes-no') answerYesNo(session, job);
+  }
+  // Yes and No in full (stable frame spec 2026-10-28 §11): after a yes-or-no
+  // question's local set is sealed (it never waits for this), one request for
+  // the two answers in her words and the feeling they are about. Built-in reply
+  // core only. Dropped with its job: a new question, a cancel, a close, or the
+  // page's `drop` (Something else, Clear, Back); an answer for anything but the
+  // job on screen is never emitted.
+  function answerYesNo(session, job) {
+    if (adapterUrl || !choicesCore.available) return;
+    job.answer = new AbortController();
+    const signal = AbortSignal.any([job.controller.signal, job.answer.signal, AbortSignal.timeout(limits.adapterMs)]);
+    const context = Array.isArray(session.context) && session.context.length ? session.context : undefined;
+    choicesCore.answerYesNo({ text: job.text, ...(context ? { context } : {}) }, { signal }).then(answer => {
+      if (signal.aborted || session.closed || session.choiceJob !== job || job.generation !== session.generation) return;
+      const id = answer.feeling ? conceptId(answer.feeling) : null, feeling = id ? answer.feeling : null;
+      const side = phrase => ({ label: phrase, say: phrase, ...(feeling ? { symbol: feeling, symbolId: id } : {}) });
+      emit(session, { type: 'yes-no-answered', generation: job.generation, ...windowOf(job), yes: side(answer.yes), no: side(answer.no), feeling,
+        ...(reportUsage() && cleanUsage(answer.usage) ? { usage: cleanUsage(answer.usage) } : {}) });
+    }, () => { /* the plain Yes and No stay */ });
   }
   function attachChoices(session, job) {
+    // A new question drops the answers in full still coming for the last one.
+    if (session.choiceJob && session.choiceJob !== job) session.choiceJob.answer?.abort();
     session.choiceJob = job; job.attached = true;
     for (const choice of job.staged) stageChoice(session, job, choice);
     if (job.done) sealChoices(session, job);
@@ -1002,7 +1024,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   function abortChoices(session) {
     const turn = session.turn;
     if (turn) { clearTimeout(turn.stableTimer); if (turn.speculation && !turn.speculation.attached) turn.speculation.controller.abort(); turn.speculation = null; }
-    if (session.choiceJob) { session.choiceJob.controller.abort(); session.choiceJob = null; }
+    if (session.choiceJob) { session.choiceJob.controller.abort(); session.choiceJob.answer?.abort(); session.choiceJob = null; }
   }
   // Speculation: a partial unchanged for ERA_CHAT_SPECULATE_MS (or words the
   // service says are settled) starts a hidden request on that text.
@@ -1372,9 +1394,11 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     }
     if (req.method === 'POST' && match[2] === 'control') {
       const body = await readJson(req, limits.bodyBytes);
-      if (!['arm', 'ask', 'finish', 'cancel', 'pause', 'close', 'window', 'pick'].includes(body.type) ||
+      if (!['arm', 'ask', 'finish', 'cancel', 'pause', 'close', 'window', 'pick', 'drop'].includes(body.type) ||
         (body.type === 'arm' && typeof body.enabled !== 'boolean') ||
         (body.type === 'window' && body.ear !== undefined && typeof body.ear !== 'boolean')) throw fault(400, 'invalid-control');
+      // The page put the plain Yes and No back (§11): the answers in full still coming go; nothing else changes.
+      if (body.type === 'drop') { session.choiceJob?.answer?.abort(); return json(res, 200, { ok: true, generation: session.generation }); }
       // The wake word's ear (stable frame §8): on with ear:true, off with ear:false.
       if (body.type === 'window' && body.ear !== undefined) {
         if (!body.ear) { closeEar(session, 'off'); return json(res, 200, { ok: true, generation: session.generation }); }

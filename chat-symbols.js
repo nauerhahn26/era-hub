@@ -122,6 +122,8 @@ function symbolWords() {
   const words = vocabulary().concepts.slice(0, ENUM_CAP).map(concept => concept.word);
   return words.includes(FALLBACK) ? words : [...words, FALLBACK];
 }
+// A concept's picture id in the vocabulary table, or null (yes/no in full, spec 2026-10-28 §11).
+function conceptId(word) { const id = vocabulary().byWord.get(word)?.id; return Number.isSafeInteger(id) && id > 0 ? id : null; }
 function isNegative(word) { return word === FALLBACK || vocabulary().byWord.get(word)?.tone === 'negative'; }
 
 // Concept families. A food, drink, place or person label takes a picture of its
@@ -632,5 +634,5 @@ function createSymbolWarmer({ ids, isCached, fetchOne, delayMs = 250, maxFailure
   };
 }
 
-module.exports = { symbolWords, pickSymbol, symbolRejected, withSymbols, vocabularyIds, createSymbolWarmer, normal,
+module.exports = { symbolWords, conceptId, pickSymbol, symbolRejected, withSymbols, vocabularyIds, createSymbolWarmer, normal,
   setLexicon, setPeople, pictureCandidates, createPictureWarmer };
