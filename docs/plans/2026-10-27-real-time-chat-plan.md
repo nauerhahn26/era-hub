@@ -579,3 +579,19 @@ never swap under the tile she chose; her clip goes out as silence with a
 150 ms tail so the stream timeline stays continuous (182e439, e553aaa).
 Gate 206/0. Unverified on a device: whether echo cancellation plus silence
 keeps her clip out of the transcript at room volume.
+
+## Runs of questions + her voice on every playback path (10/31) — LANDED 5be802b, v1.0.40
+From the home device's 10/31 records: "do you want water? Do you want to
+wait? Do you want something else?" and "do you want yogurt? Do you want,
+uh, French toast?" got the local yes/no set because the shortcut matched the
+first clause; the either/or shortcut likewise read only the last clause.
+Now an utterance with two or more question sentences goes to the model as
+shape open (instruction: a run of short questions is a list of alternatives);
+a single yes/no or either/or question stays local; the restart exception
+("No wait. …") stays (dfaf3e0, 0a56fc0). A wake record at 16:17 held the
+device's own read-aloud ("I'm asking, so your options are"): the gate now
+covers every media element while it plays, a device voice while it speaks,
+the press tones and other Chat pages (broadcast channel), with a tail that
+adds the device's audio latency (088748f); the exact bypass on the device
+was not reproduced (device-voice early end or a second Chat page are the
+candidates). Gate 206/0.
