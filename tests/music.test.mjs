@@ -73,12 +73,16 @@ before(async () => {
     songs.push({ id: `song-${i}`, title: `Song ${i}`, audio: `song-${i}.wav`,
                  cover: `song-${i}.jpg`, duration: 30 + i,
                  source: "https://example.invalid/" + i, rank: i,
-                 // song-12 has no addedAt: it falls back to its audio file's
-                 // modification time (today), so it is the newest song
-                 ...(i < N ? { addedAt: `2026-09-${String(i).padStart(2, "0")}T12:00:00.000Z` } : {}),
+                 // song-11 and song-12 have no addedAt: they count as older
+                 // than every dated song, the higher rank newer — whatever
+                 // their audio files' times say (set below, opposite way round)
+                 ...(i < N - 1 ? { addedAt: `2026-09-${String(i).padStart(2, "0")}T12:00:00.000Z` } : {}),
                  ...(i <= 3 ? { category: "top-hits" } : i === 4 ? { category: "disney" } : {}) });
   }
   songs[5].category = "jazz";   // not a category the board knows: no section
+  // the mirror's copy time differs per device: make song-11's audio the newer file
+  fs.utimesSync(path.join(music, "song-12.wav"), new Date("2026-01-01T00:00:00Z"), new Date("2026-01-01T00:00:00Z"));
+  fs.utimesSync(path.join(music, "song-11.wav"), new Date("2026-10-30T00:00:00Z"), new Date("2026-10-30T00:00:00Z"));
   const pictures = Array.from({ length: 10 }, (_, i) => `song-1-frame-0123456789abcdef-${String(i).padStart(2, "0")}.jpg`);
   for (const name of pictures) fs.writeFileSync(path.join(music, name), JPEG);
   songs[0].pictures = pictures;
@@ -138,8 +142,9 @@ const songsAt = (board) => CELLS.map(([r, c]) => btnAt(board, r, c)).filter(b =>
 const recipeNow = async () => (await fetch(`${BASE}/recipes/songs.json`)).json();
 const boardOf = (recipe, id) => recipe.boards.find(b => b.id === id);
 // with nothing played every score is 0, so every score-ordered section is in
-// added order: song-12 (no addedAt, audio written today) first, then 11..1
-const BY_ADDED = Array.from({ length: N }, (_, i) => `song-${N - i}`);
+// added order: the dated songs newest first (10..1), then the undated ones by
+// rank, higher first (12, 11) — never by their audio files' times
+const BY_ADDED = [...Array.from({ length: N - 2 }, (_, i) => `song-${N - 2 - i}`), "song-12", "song-11"];
 
 test("GET /recipes/songs.json: a rail of sections beside a 3x4 grid, nine songs a page", async () => {
   const r = await fetch(`${BASE}/recipes/songs.json`);
@@ -256,7 +261,7 @@ test("song pages: hero spans three quarters; controls fill the far-right column"
   assert.equal(full.song_id, "song-1");
   assert.ok(full.audio && full.v, "Full song can start playback on its own");
   assert.equal(sp.buttons.reduce((n, b) => n + (b.row_span || 1) * (b.col_span || 1), 0), 12, "every cell covered");
-  assert.equal(btnAt(recipe.boards.find(b => b.id === "song-song-12"), 1, 4).load, "songs-all");
+  assert.equal(btnAt(recipe.boards.find(b => b.id === "song-song-10"), 1, 4).load, "songs-all");
 });
 
 test("musicVolCap: /settings round-trip with clamping (default 100)", async () => {
@@ -341,7 +346,7 @@ test("plays reorder the sections on the next build, and only the ETag's order pa
   assert.equal(recipe.root, "songs-fav", "once she has favorites, Music opens on them");
   // scores 3,3,1,1: ties newest added first (song-3 09-03 before song-2 09-02; song-7 before song-5)
   assert.deepEqual(songsAt(boardOf(recipe, "songs-fav")), ["song-3", "song-2", "song-7", "song-5"]);
-  assert.deepEqual(songsAt(boardOf(recipe, "songs-all")).slice(0, 5), ["song-3", "song-2", "song-7", "song-5", "song-12"]);
+  assert.deepEqual(songsAt(boardOf(recipe, "songs-all")).slice(0, 5), ["song-3", "song-2", "song-7", "song-5", "song-10"]);
   assert.deepEqual(songsAt(boardOf(recipe, "songs-top-hits")), ["song-3", "song-2", "song-1"]);
   assert.deepEqual(songsAt(boardOf(recipe, "songs-new")), BY_ADDED.slice(0, 9), "New never reorders by score");
   const r3 = await fetch(`${BASE}/recipes/songs.json`, { headers: { "If-None-Match": etag2 } });

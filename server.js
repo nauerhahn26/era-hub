@@ -1005,9 +1005,11 @@ function songsRecipe() {
       let v = 0;
       try { v = Math.floor(fs.statSync(path.join(MUSIC_DIR, s.audio)).mtimeMs); }
       catch { return null; }                     // audio file missing: skip the song
-      // addedAt is written on add; an older song falls back to its audio mtime
+      // addedAt is written on add. An older song has none and stays undated
+      // (music-sections.js orders it by rank): never its audio mtime, which is
+      // when the mirror copied the file to THIS device.
       const added = Date.parse(s.addedAt);
-      return { ...s, v, addedMs: Number.isFinite(added) ? added : v,
+      return { ...s, v, addedMs: Number.isFinite(added) ? added : null,
                category: SONG_CATEGORIES.includes(s.category) ? s.category : null };
     })
     .filter(Boolean);

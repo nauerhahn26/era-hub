@@ -67,7 +67,7 @@ test("events are folded in time order, whatever order they arrive in", () => {
 
 // ---- sections ----------------------------------------------------------------
 
-const song = (id, extra = {}) => ({ id, rank: 0, addedMs: 0, ...extra });
+const song = (id, extra = {}) => ({ id, rank: 0, ...extra });
 
 test("the rail's five sections, in order", () => {
   assert.deepEqual(SECTIONS.map(s => s.label), ["Favorites", "New", "Top hits", "Disney", "All"]);
@@ -91,8 +91,22 @@ test("section membership and order follow the spec's table", () => {
   assert.deepEqual(o.all, ["princess", "old-hit", "lullaby", "new-hit", "unplayed"]);
 });
 
+test("a song with no addedAt is older than every dated song; undated songs order by rank, higher = newer", () => {
+  // no addedMs at all: the order must be the same on every device, so the
+  // audio file's copy time never decides it
+  const o = sectionOrders([
+    song("undated-low", { rank: 1, addedMs: null }),
+    song("dated", { rank: 5, addedMs: 1000 }),
+    song("undated-high", { rank: 3, addedMs: null }),
+    song("undated-mid", { rank: 2 }),
+  ], new Map([["undated-low", 1], ["undated-high", 1]]));
+  assert.deepEqual(o.new, ["dated", "undated-high", "undated-mid", "undated-low"]);
+  assert.deepEqual(o.fav, ["undated-high", "undated-low"], "a score tie between undated songs: higher rank first");
+  assert.deepEqual(o.all, ["undated-high", "undated-low", "dated", "undated-mid"]);
+});
+
 test("score ties with the same added time fall back to the old manifest rank", () => {
-  const o = sectionOrders([song("b", { rank: 2 }), song("a", { rank: 1 }), song("c", { rank: 3 })], new Map());
+  const o = sectionOrders([song("b", { rank: 2, addedMs: 7 }), song("a", { rank: 1, addedMs: 7 }), song("c", { rank: 3, addedMs: 7 })], new Map());
   assert.deepEqual(o.all, ["a", "b", "c"]);
   assert.deepEqual(o.fav, [], "nothing played: Favorites is empty");
 });

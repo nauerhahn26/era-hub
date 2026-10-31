@@ -72,7 +72,12 @@ The `music/` mirror must carry and never prune `.era`.
 ## New songs
 
 - `addedAt` (ISO time) is written into the manifest entry when a song is added.
-  An existing song without one uses its audio file's modification time.
+  An existing song without one counts as older than every song that has one,
+  and among undated songs the higher manifest `rank` counts as newer (songs
+  were appended at the end). Never the audio file's modification time: the
+  mirror copies files, so that time differs per device and New would order
+  differently on each. This applies everywhere added time is used (New, and
+  the score tie-break).
 - At add time the configured AI helper (`ai-config.js` roles, the same transport
   picture screening uses) classifies the song from its title and source title as
   `top-hits`, `disney` or none. A missing helper or an unclear answer leaves no

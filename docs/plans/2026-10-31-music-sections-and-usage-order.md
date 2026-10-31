@@ -37,6 +37,12 @@ Maintainer authorized build and publish on 2026-10-31.
   rail label holds 74. Old pool `end` events score as partial (they cannot be
   told apart); old `play` then `full` before the next pick is full. Full song
   after the clip ran out upgrades that pick rather than starting a new one.
-- Fixture order is by audio mtime, so suites that assumed `test-song-1` first
-  now read the first song off the page.
-- Gate: 207 passed, 0 failed (run 2026-10-31T18-28-56Z-0863608).
+- The gate fixture has no `addedAt`, so its songs order by rank, newest
+  (highest) first; suites that assumed `test-song-1` first now read the first
+  song off the page.
+- Review change: a song with no `addedAt` first fell back to its audio mtime,
+  which is the mirror's copy time and differs per device. Now it counts as
+  older than every dated song, higher `rank` newer among undated songs, in New
+  and in the score tie-break alike (music-sections.js), so every device orders
+  the existing library the same way.
+- Gate: 207 passed, 0 failed (run 2026-10-31T18-28-56Z-0863608), rerun after the review change.
