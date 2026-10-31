@@ -659,3 +659,21 @@ without a feeling); alternatives and open questions never trigger it. Typed
 questions in the partner dialog take the plain request path and get no
 answers in full (desktop testing only). Home device on build 20261031.2145
 (v1.0.44 preview, not published).
+
+## Her clip is handled, never silenced (dad, 10/31 night) — spec §13
+Dad: "you cannot silence the mic when she talks. You have to handle it."
+- [ ] H1 `chat-echo.js`: pure `stripEcho(turnText, clips, at)` → `{ text, matched }`
+      (runs of ≥2 clip words in order removed; one-word clip removes only a
+      bare match; empty → `text: ''`); `clipBook` keeping clips for a few
+      seconds (start, end, text, source). Tests first: exact echo, partial
+      echo, partner words + echo in one turn (both orders), the reading's long
+      text with her name inside, a turn after the 3 s tail untouched, Yes./No.
+- [ ] H2 hub: `control {type:'clip'}` replaces `gate` (validation, ear record
+      `clip`); every turn-end/final/settled/partial on ear, main, window and
+      hold paths goes through the book; dropped turns seal nothing; `echo`
+      ear records; `EAR_EVENTS` + whitelist in chat-turns.
+- [ ] H3 page: `sendFrame` never substitutes silence; `audioStarted/Ended`
+      carry the clip's text (voice.say's text, the reading's text, the device
+      voice's text); broadcast carries text; `clip` control; diagnostics box
+      shows clip/echo lines; the old gate tests flip to "frames keep flowing".
+- [ ] H4 registry regenerated if launch counts change; spec §9 amended (done).
