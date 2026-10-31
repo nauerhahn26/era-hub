@@ -307,6 +307,11 @@ export async function checkInstalledChatUI(page, options = {}) {
     assert.equal(await page.locator('#wakeToggle').count(), 1, 'the listening switch is in the partner strip');
     assert.equal(await page.locator('#wakeToggle').getAttribute('aria-pressed'), 'false', 'listening for her name is off');
     assert.equal(await page.locator('#wakeBanner').isVisible(), false);
+    // The partner's Clear (maintainer 10/31): left of the switch, off with nothing to clear.
+    assert.equal(await page.locator('#partnerStrip #clearQuestion').count(), 1, 'Clear is in the partner strip');
+    assert.equal(await page.locator('#clearQuestion').isDisabled(), true, 'nothing to clear on a fresh Chat');
+    const [clearBox, wakeBox] = await page.evaluate(() => ['#clearQuestion', '#wakeToggle'].map(id => document.querySelector(id).getBoundingClientRect().toJSON()));
+    assert.ok(clearBox.right <= wakeBox.left, 'Clear is left of the listening switch');
     assert.equal((await audio()).playCalls, 0, 'warming prepared phrases cannot play audio');
     await openPartner(); await page.locator('#voicePreference').selectOption('local', { timeout });
     await waitForVoiceSaved(page, timeout);

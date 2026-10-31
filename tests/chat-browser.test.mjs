@@ -760,3 +760,55 @@ test('another Chat page speaking is never heard either: the ear sends silence wh
   assert.ok(during.frames > 0 && during.loud === 0, `only silence while another Chat page speaks: ${JSON.stringify(during)}`);
   assert.deepEqual(f.errors, []);
 });
+
+test('Clear in the top bar drops the current question: strip order, off when there is nothing to clear or a hold, the ear and the Back stack untouched (maintainer 10/31)', { timeout: 90000 }, async t => {
+  const f = await earFixture(t);
+  const page = await f.open();
+  const cdp = await f.context.newCDPSession(page);
+  const touch = async (selector, ms = 60) => {
+    const box = await page.locator(selector).boundingBox(); assert.ok(box, selector);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: box.x + box.width / 2, y: box.y + box.height / 2, id: 1 }] });
+    await page.waitForTimeout(ms); await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  };
+  // Clear, Listen for <name>, the lock, •••, Hold to ask, left to right.
+  const boxes = await page.evaluate(() => ['#clearQuestion', '#wakeToggle', '#stripLock', '#partnerOpen', '#ask'].map(id => document.querySelector(id).getBoundingClientRect().toJSON()));
+  for (let i = 1; i < boxes.length; i++) assert.ok(boxes[i - 1].right <= boxes[i].left, `strip order at ${i}: ${JSON.stringify(boxes.map(box => [box.left, box.right]))}`);
+  const clear = page.locator('#clearQuestion');
+  assert.equal((await clear.textContent()).trim(), 'Clear');
+  assert.equal(await clear.isDisabled(), true, 'nothing to clear yet');
+  async function ask(text, first) {
+    await f.emit(page, { type: 'utterance-sealed', ear: true, earId: 'ear-1', windowId: `w-${text}`, seq: 1, text, windowText: text, generation: f.EAR });
+    await f.emit(page, { type: 'batch-sealed', generation: f.EAR, windowId: `w-${text}`, seq: 1, kind: 'generated', choices: [{ label: first, say: first }, { label: 'Not now', say: 'Not now' }] });
+    await page.waitForFunction(label => document.querySelector('#grid .response .label')?.textContent === label, first);
+  }
+  await ask('music or a story?', 'Music');
+  await ask('what about lunch?', 'Tea');
+  assert.equal(await clear.isDisabled(), false);
+  await page.locator('#grid .tile.mode[data-mode="ask"]').click();
+  await clear.click(); assert.equal(await page.locator('#grid .tile.response').count(), 0, 'a mouse or gaze click does nothing (the made set still shows)');
+  const controlsBefore = f.controls.length;
+  await touch('#clearQuestion');
+  await page.waitForFunction(() => document.querySelector('#grid .tile.question .label')?.textContent === 'Ask me something');
+  assert.deepEqual(await page.locator('#grid .tile.static .label').allTextContents(), ['Tell me more', 'Something else', 'Hi!', "What's up?", 'How are you?', 'Come sit with me.'], 'the openers are back');
+  assert.equal(await page.locator('#grid .tile.mode.on').count(), 0, 'the lit mode is closed');
+  assert.equal(await page.locator('#phase').textContent(), 'Listening for Ellie', 'the ear listens on');
+  assert.deepEqual(f.controls.slice(controlsBefore), [], 'the session and the ear are untouched');
+  assert.equal(await clear.isDisabled(), true, 'nothing left to clear');
+  // The cleared batch is not kept for Back; the one before it is.
+  await page.locator('#back').click();
+  await page.waitForFunction(() => document.querySelector('#grid .response .label')?.textContent === 'Music');
+  assert.equal(await page.locator('#grid .tile.question .label').textContent(), 'music or a story?');
+  // A page open with nothing else: Clear closes it.
+  await touch('#clearQuestion'); await page.waitForFunction(() => !document.querySelector('#grid .response'));
+  await page.locator('#grid .tile.page[data-page="about"]').click();
+  assert.equal(await clear.isDisabled(), false);
+  await touch('#clearQuestion'); await page.locator('#grid .tile.page.on').waitFor({ state: 'detached' });
+  // During a hold Clear is off.
+  await ask('anything else?', 'Juice');
+  const box = await page.locator('#ask').boundingBox();
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: box.x + box.width / 2, y: box.y + box.height / 2, id: 1 }] });
+  await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Capturing question');
+  assert.equal(await clear.isDisabled(), true, 'off during a hold');
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  assert.deepEqual(f.errors, []);
+});
