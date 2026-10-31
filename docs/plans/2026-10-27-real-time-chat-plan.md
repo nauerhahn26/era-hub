@@ -648,3 +648,12 @@ And a question lost in Listen mode (13:08–13:23 PT) that no record explains.
 - [x] E1 ear records (kind 'ear') from the hub while test mode is on; page gate
       periods via `control {type:'gate'}`; diagnostics box shows the last twelve.
 - [x] Tests first for each; registry regenerated if browser launch counts change.
+Outcome (10/31 evening): Y1–Y3 + E1 landed ab6db30, the one-word floor
+(a bare Yes/No from the model changes nothing and is not `answered`) landed
+1e8a1de; gate 207/0 twice. Verified on the home device against the real reply
+model: the local set is on screen ~1.0–1.4 s after release, the answers in
+full 1.2–2.4 s later (angry → angry face 2374, tired → 2314; juice/parade
+without a feeling); alternatives and open questions never trigger it. Typed
+questions in the partner dialog take the plain request path and get no
+answers in full (desktop testing only). Home device on build 20261031.2145
+(v1.0.44 preview, not published).
