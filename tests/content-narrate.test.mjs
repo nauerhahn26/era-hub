@@ -494,7 +494,8 @@ test("the key comes from the Voice card via aiRoles(), never from a caller liter
   calls = [];
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "era-narr-card-"));
   fs.writeFileSync(path.join(dataDir, "tts-config.json"),
-    JSON.stringify({ apiKey: FAKE_KEY, voiceId: "XrExE9yKIg1WjnnlVkGX", keyOk: true }));
+    // her voice is a different pick: a book is read by the helper voice (10/31)
+    JSON.stringify({ apiKey: FAKE_KEY, voiceId: "cVd39cx0VtXNC13y5Y7z", helperVoiceId: "XrExE9yKIg1WjnnlVkGX", keyOk: true }));
   const dir = book("card", ["A busy bee."]);
   const r = await narrate.narrateBook(dir, { dataDir });
   assert.equal(calls.length, 1);

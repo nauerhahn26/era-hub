@@ -118,8 +118,13 @@
 
   <div class="card" id="voice">
     <h2>🎙 Voice</h2>
-    <p class="hint">The voice that talks to your child in Making Words and The Pencil. Tap any voice to hear it and choose it.</p>
+    <p class="hint">Two voices. Tap any voice to hear it and choose it.</p>
+    <h3>Her voice</h3>
+    <p class="hint">What she says: her chosen words and replies in Chat.</p>
     <div class="row" id="voices"></div>
+    <h3>Helper voice</h3>
+    <p class="hint">Everything else: questions, choices read aloud, games and books.</p>
+    <div class="row" id="helperVoices"></div>
     <div class="status" id="voiceStatus"></div>
     <div style="margin-top:16px">
       <label for="responseVoiceSpeed">Response voice speed on this device (%)</label>
@@ -561,6 +566,7 @@ async function loadVoices(){
   try{
     const v = await (await fetch("/voices")).json();
     const box = $("voices"); box.innerHTML="";
+    const helperBox = $("helperVoices"); helperBox.innerHTML="";
     if(v.enabled){
       $("voiceStatus").innerHTML='<b>Premium voices active ✓</b>';
       $("ttsKeyStatus").innerHTML='<b>Key checked and working ✓</b> Choose a voice in <a href="#sound">Voice &amp; sound</a>.';
@@ -573,25 +579,31 @@ async function loadVoices(){
       $("voiceStatus").innerHTML='<span class="bad">Voice key not set — using the built-in Windows voice.</span>';
       $("ttsKeyStatus").innerHTML="";
     }
-    for(const voice of v.voices){
-      const b=document.createElement("button");
-      b.className="voice"+(voice.id===v.current?" sel":"");
-      b.innerHTML='<span class="nm">'+voice.name.split(" — ")[0]+'</span> <span style="color:#7A8A90">'+(voice.name.split(" — ")[1]||"")+'</span>';
-      b.onclick=()=>chooseVoice(voice.id, voice.name, b);
-      box.appendChild(b);
+    // one curated list, two rows: her voice and the helper voice (spec 2026-10-31 §3.3)
+    for(const [row, role, chosen] of [[box, "her", v.current], [helperBox, "helper", v.helper]]){
+      for(const voice of v.voices){
+        const b=document.createElement("button");
+        b.className="voice"+(voice.id===chosen?" sel":"");
+        b.innerHTML='<span class="nm">'+voice.name.split(" — ")[0]+'</span> <span style="color:#7A8A90">'+(voice.name.split(" — ")[1]||"")+'</span>';
+        b.onclick=()=>chooseVoice(role, voice.id, voice.name, b);
+        row.appendChild(b);
+      }
     }
   }catch(e){ $("voiceStatus").textContent="Could not reach the app server."; }
 }
 let audio=null;
-async function chooseVoice(id, name, btn){
-  document.querySelectorAll("#voices .voice").forEach(x=>x.classList.remove("sel"));
+async function chooseVoice(role, id, name, btn){
+  const helper = role==="helper";
+  document.querySelectorAll((helper?"#helperVoices":"#voices")+" .voice").forEach(x=>x.classList.remove("sel"));
   btn.classList.add("sel");
-  await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({voiceId:id})});
-  toast("Voice set: "+name.split(" — ")[0]);
-  // preview
+  await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(helper?{helperVoiceId:id}:{voiceId:id})});
+  toast((helper?"Helper voice set: ":"Her voice set: ")+name.split(" — ")[0]);
+  // preview, in the role just chosen
+  const text = helper ? "Hi "+(window.ERA_CHILD_NAME||"friend")+"! I can be your helper voice." : "Hi! This is my voice.";
   try{
     const r = await fetch("/tts",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({text:"Hi "+(window.ERA_CHILD_NAME||"friend")+"! I can be your helper voice."})});
+      body:JSON.stringify({text, voice:role})});
     if(r.ok){ if(audio) audio.pause(); audio=new Audio(URL.createObjectURL(await r.blob())); audio.play().catch(()=>{}); }
   }catch(e){}
 }

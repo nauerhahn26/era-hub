@@ -6,14 +6,6 @@
     "~/.local/state/era-gate-runs/2026-10-27T01-43-42Z-47ab167/results.jsonl"
   ],
   "suites": {
-    "era-board:tests/board-arrange.test.mjs": {
-      "max_s": 10.394,
-      "mean_s": 9.963,
-      "median_s": 9.963,
-      "min_s": 9.531,
-      "samples": 2,
-      "source": "results"
-    },
     "era-board:tests/board-clothing-coach.test.mjs": {
       "max_s": 18.649,
       "mean_s": 18.566,

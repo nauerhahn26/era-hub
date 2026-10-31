@@ -8,15 +8,16 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
 
 function setup(extra = {}) {
   const values = new Map(), spoken = [], played = [], revoked = [], calls = [];
-  let nextUrl = 0, selected = 'configured-first';
+  let nextUrl = 0, selected = 'configured-first', helper = 'helper-first';
   const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
   const synth = { cancel() {}, getVoices: () => [], speak(u) { spoken.push(u.text); queueMicrotask(() => { u.onstart?.(); u.onend?.(); }); } };
   const voice = createChatVoice({ storage, synth, makeUtterance: text => ({ text }),
     createObjectURL: () => `prepared-${++nextUrl}`, revokeObjectURL: url => revoked.push(url),
     makeAudio: url => ({ pause() {}, play() { played.push(url); queueMicrotask(() => { this.onplaying?.(); this.onended?.(); }); return Promise.resolve(); } }),
     fetch: async (url, init) => { calls.push({ url, init }); return url === '/voices'
-      ? Response.json({ enabled: true, current: selected }) : new Response(new Blob(['audio'], { type: 'audio/mpeg' })); }, ...extra });
-  return { voice, values, storage, spoken, played, revoked, calls, select: value => { selected = value; } };
+      ? Response.json({ enabled: true, current: selected, helper }) : new Response(new Blob(['audio'], { type: 'audio/mpeg' })); }, ...extra });
+  const clips = () => calls.filter(call => call.url === '/tts').map(call => JSON.parse(call.init.body));
+  return { voice, values, storage, spoken, played, revoked, calls, clips, select: value => { selected = value; }, selectHelper: value => { helper = value; } };
 }
 
 test('saved voice is the default and explicit browser preference persists across instances', () => {
@@ -273,5 +274,66 @@ test('staged choices prefetch at once: urgent clips run beside the background wa
   assert.equal(active, 6, 'all four staged choices fetch now, none waits behind the warm-up');
   while (waiting.length) { waiting.shift()(); await flush(); }
   assert.deepEqual(s.played, []); assert.deepEqual(s.spoken, []);
+  s.voice.dispose();
+});
+
+// Two voices (spec 2026-10-31 §3.2-3.3): her pick in her voice, everything
+// else (the options reading, each label, the partner's question) in the helper's.
+test('each clip names its role: her words post "her", the helper\'s words "helper", a say that names none is hers', async () => {
+  const s = setup();
+  assert.equal(await s.voice.say('My words', { role: 'her' }), true);
+  assert.equal(await s.voice.say('Your options are', { role: 'helper' }), true);
+  assert.equal(await s.voice.say('Unnamed words'), true);
+  assert.deepEqual(s.clips(), [{ text: 'My words', voice: 'her' }, { text: 'Your options are', voice: 'helper' }, { text: 'Unnamed words', voice: 'her' }]);
+  s.voice.dispose();
+});
+
+test('the same words under two roles are two clips: two requests, two cache entries, each replayed from its own', async () => {
+  const s = setup();
+  await s.voice.say('Music', { role: 'helper' });
+  await s.voice.say('Music', { role: 'her' });
+  assert.deepEqual(s.clips(), [{ text: 'Music', voice: 'helper' }, { text: 'Music', voice: 'her' }]);
+  assert.deepEqual(s.played, ['prepared-1', 'prepared-2']);
+  await s.voice.say('Music', { role: 'her' });
+  await s.voice.say('Music', { role: 'helper' });
+  assert.equal(s.clips().length, 2, 'both stay cached');
+  assert.deepEqual(s.played.slice(2), ['prepared-2', 'prepared-1']);
+  assert.deepEqual(s.revoked, []);
+  s.voice.dispose();
+});
+
+test('prefetch carries its role: a helper warm-up serves the helper say, never her pick of the same words', async () => {
+  const fetched = [], usage = [];
+  const s = setup({ onFetch: (chars, text) => fetched.push(text) });
+  s.voice.prefetch([{ say: 'A story' }], { role: 'helper' });
+  for (let i = 0; i < 20 && !fetched.length; i++) await flush();
+  for (let i = 0; i < 20; i++) await flush();
+  assert.deepEqual(s.clips(), [{ text: 'A story', voice: 'helper' }]);
+  await s.voice.say('A story', { role: 'helper', onClip: value => usage.push(value.cache) });
+  await s.voice.say('A story', { role: 'her', onClip: value => usage.push(value.cache) });
+  assert.deepEqual(usage, ['hit', 'miss']);
+  assert.deepEqual(s.clips(), [{ text: 'A story', voice: 'helper' }, { text: 'A story', voice: 'her' }]);
+  s.voice.prefetch([{ say: 'Her warm words' }]);
+  for (let i = 0; i < 40; i++) await flush();
+  assert.deepEqual(s.clips().at(-1), { text: 'Her warm words', voice: 'her' }, 'an unnamed prefetch is hers');
+  s.voice.dispose();
+});
+
+test('a changed helper voice from /voices (hers unchanged) clears the clips: the next say fetches again', async () => {
+  const s = setup();
+  await s.voice.say('Your options are', { role: 'helper' });
+  await s.voice.say('Your options are', { role: 'helper' });
+  assert.equal(s.clips().length, 1);
+  // A refresh serves the held value while /voices is read again in the background.
+  s.selectHelper('helper-second'); s.voice.refresh();
+  await s.voice.say('Your options are', { role: 'helper' }); await flush(); await flush();
+  assert.equal(s.calls.filter(x => x.url === '/voices').length, 2);
+  assert.deepEqual(s.revoked, ['prepared-1'], 'the old helper clip is released');
+  await s.voice.say('Your options are', { role: 'helper' });
+  assert.equal(s.clips().length, 2, 'the next say fetches the clip again');
+  s.voice.refresh();
+  await s.voice.say('Your options are', { role: 'helper' }); await flush(); await flush();
+  await s.voice.say('Your options are', { role: 'helper' });
+  assert.equal(s.clips().length, 2, 'an unchanged answer keeps the clips');
   s.voice.dispose();
 });
