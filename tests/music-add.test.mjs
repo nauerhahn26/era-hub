@@ -238,6 +238,8 @@ test("a pasted link: audio + thumbnail into the DRIVE folder, one manifest entry
   assert.equal(s.duration, 232);
   assert.equal(s.source, "https://www.youtube.com/watch?v=letitgo1");
   assert.equal(s.rank, 1, "first song takes the first tile");
+  assert.ok(Date.parse(s.addedAt) > Date.now() - 60000, "addedAt says when the song was added");
+  assert.equal(s.category, undefined, "no helper configured: no category, and the add still succeeds");
   assert.equal(fs.existsSync(path.join(MUSIC, "manifest.tmp")), false, "written atomically, no litter");
   assert.deepEqual(fs.readdirSync(MUSIC).filter(n => n.startsWith(".")), [],
                    "and the staged download swept up after itself");
@@ -302,7 +304,7 @@ test("the song reaches the shelf: it is in the generated recipe and servable wit
     await new Promise(r2 => setTimeout(r2, 100));
   }
   assert.ok(recipe, "the songs recipe exists once a song does");
-  const tile = recipe.boards[0].buttons.find(b => b.song_id === "let-it-go");
+  const tile = recipe.boards.find(b => b.id === "songs-new").buttons.find(b => b.song_id === "let-it-go");
   assert.ok(tile, "the new song has a tile");
   assert.equal(tile.audio, "music/let-it-go.m4a");
   assert.equal(tile.image, "music/let-it-go.webp");
@@ -333,6 +335,7 @@ test("a typed name searches YouTube for one hit and takes the next free rank", a
 });
 
 test("adding the same song again replaces it in place and keeps its tile", async () => {
+  const firstAdded = manifest().songs.find(x => x.id === "let-it-go").addedAt;
   ctl({ mode: "ok", id: "letitgo1", title: "Let It Go!", duration: 999 });
   assert.equal((await post("/music/add", { url: "https://www.youtube.com/watch?v=letitgo1" })).status, 202);
   assert.equal((await settled()).ok, true);
@@ -342,6 +345,7 @@ test("adding the same song again replaces it in place and keeps its tile", async
   const s = m.songs.find(x => x.id === "let-it-go");
   assert.equal(s.rank, 1, "a re-added song keeps the place Ellie already knows");
   assert.equal(s.duration, 999, "and the entry really was rewritten");
+  assert.equal(s.addedAt, firstAdded, "a re-add keeps the song's added time");
 });
 
 test("a name that is not [a-z0-9-] is refused, and nothing is written outside music/", async () => {
@@ -518,98 +522,121 @@ test("a song list Our Era Comms cannot read is refused, never rewritten", async 
   assert.equal(j.error, "manifest-unreadable");
   assert.ok(typeof j.message === "string" && j.message.length > 10, "in words a parent can act on");
 
-  const o = await post("/music/order", { ids: ["let-it-go", "how-far-ill-go"] });
-  assert.equal(o.status, 409, "and arranging is refused the same way");
+  const o = await post("/music/category", { id: "let-it-go", category: "disney" });
+  assert.equal(o.status, 409, "and a category change is refused the same way");
   assert.equal((await o.json()).error, "manifest-unreadable");
 
   assert.equal(fs.readFileSync(file, "utf8"), half, "the half-written file is left exactly as it was");
   fs.writeFileSync(file, good);
 });
 
-// --------------------------------------------------- ⇅ Arrange (plan T4.3)
-// POST /music/order is the whole running order in one shot: the strip hands
-// back every id, the hub renumbers `rank` from 1 and touches nothing else.
-// A song's tile is where Ellie learned it is, so a half-written order (one id
-// missing, one id it does not have) must change nothing at all.
+// ------------------------------------- sections (spec 2026-10-31 "New songs")
+// Arrange is gone: usage order replaces the hand-kept running order. A song's
+// section (Top hits, Disney or neither) is the one thing a parent still sets,
+// one song at a time, and a half-done write must change nothing at all.
 
-test("⇅ Arrange rewrites every rank and nothing else, and the board sees the new order", async () => {
+test("POST /music/category sets and clears a song's section under the writer lock", async () => {
   ctl({ mode: "ok", id: "sea7", title: "Under the Sea", duration: 187 });
   assert.equal((await post("/music/add", { url: "https://www.youtube.com/watch?v=sea7" })).status, 202);
   assert.equal((await settled()).ok, true);
+  const others = () => manifest().songs.filter(x => x.id !== "under-the-sea");
+  const before = others();
 
-  const before = manifest();
-  assert.deepEqual(before.songs.map(s => [s.id, s.rank]),
-                   [["let-it-go", 1], ["how-far-ill-go", 2], ["under-the-sea", 3]],
-                   "three songs in the order they were added");
-  const etagBefore = (await fetch(`${BASE}/recipes/songs.json`)).headers.get("etag");
-  assert.ok(etagBefore, "the shelf is serving a songs recipe");
+  const r = await post("/music/category", { id: "under-the-sea", category: "disney" });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { ok: true, id: "under-the-sea", category: "disney", mirrored: true });
+  assert.equal(manifest().songs.find(x => x.id === "under-the-sea").category, "disney");
+  assert.deepEqual(others(), before, "no other song is touched");
+  const recipe = await (await fetch(`${BASE}/recipes/songs.json`)).json();
+  assert.ok(recipe.boards.find(b => b.id === "songs-disney").buttons.some(b => b.song_id === "under-the-sea"),
+    "the shelf's Disney section has it, so the write reached the Drive folder");
 
-  const r = await post("/music/order", { ids: ["under-the-sea", "let-it-go", "how-far-ill-go"] });
-  assert.equal(r.status, 200, "the order is written while the sheet waits: it is one small file");
-  assert.deepEqual(await r.json(), { ok: true, songs: 3, mirrored: true },
-                   "and the shelf took the new order, so the tiles really have moved");
+  const clear = await post("/music/category", { id: "under-the-sea", category: null });
+  assert.equal(clear.status, 200);
+  assert.equal((await clear.json()).category, null);
+  assert.equal("category" in manifest().songs.find(x => x.id === "under-the-sea"), false, "cleared means no field");
+  assert.equal((await (await post("/music/category", { id: "under-the-sea", category: "top-hits" })).json()).category, "top-hits");
 
-  const after = manifest();
-  assert.deepEqual(after.songs.map(s => [s.id, s.rank]),
-                   [["under-the-sea", 1], ["let-it-go", 2], ["how-far-ill-go", 3]],
-                   "rank 1..n in exactly the order the strip sent");
-  assert.equal(after.schemaVersion, 1);
-  const strip = (m) => Object.fromEntries(m.songs.map(({ rank, ...rest }) => [rest.id, rest]));
-  assert.deepEqual(strip(after), strip(before),
-                   "titles, audio, covers, durations and sources are untouched");
-  assert.equal(fs.existsSync(path.join(MUSIC, "manifest.tmp")), false, "written atomically, no litter");
-
-  const recipe = await fetch(`${BASE}/recipes/songs.json`);
-  assert.notEqual(recipe.headers.get("etag"), etagBefore,
-                  "the ETag moved, so a board holding a 304 cache refetches");
-  const grid = (await recipe.json()).boards[0];
-  assert.deepEqual(grid.buttons.filter(b => b.type === "song").map(b => b.song_id),
-                   ["under-the-sea", "let-it-go", "how-far-ill-go"],
-                   "the shelf's tiles are in the new order, so the write reached the Drive folder");
-});
-
-// The mirror is what carries a new order from the family's Drive folder to
-// this device's shelf, which is the board the tiles are drawn from. A mirror
-// that failed used to be swallowed, so the strip said "The songs are in their
-// new order" over a board that had not moved at all.
-test("an order the shelf did not take says so instead of claiming the tiles moved", async () => {
-  const shelf = path.join(DATA, "music", "manifest.json");
-  fs.rmSync(shelf, { force: true });
-  fs.mkdirSync(shelf, { recursive: true });   // a landing spot the copy cannot use
-  try {
-    const r = await post("/music/order", { ids: ["let-it-go", "how-far-ill-go", "under-the-sea"] });
-    assert.equal(r.status, 200, "the manifest in the family's folder really was rewritten");
-    assert.deepEqual(await r.json(), { ok: true, songs: 3, mirrored: false },
-                     "but the shelf did not take it, and the strip is told so it can say so");
-  } finally { fs.rmSync(shelf, { recursive: true, force: true }); }
-});
-
-test("an order that does not name every song is refused, and the manifest never moves", async () => {
-  const before = fs.readFileSync(path.join(MUSIC, "manifest.json"));
-  const cases = [
-    [{ ids: ["under-the-sea"] }, "incomplete"],
-    [{ ids: ["under-the-sea", "let-it-go"] }, "incomplete"],
-    [{ ids: ["under-the-sea", "let-it-go", "how-far-ill-go", "nope"] }, "unknown-song"],
-    [{ ids: ["under-the-sea", "let-it-go", "under-the-sea"] }, "bad-ids"],
-    [{ ids: ["../evil", "let-it-go", "how-far-ill-go"] }, "bad-ids"],
-    [{ ids: [] }, "incomplete"],
-    [{}, "bad-ids"],
-    [{ ids: "let-it-go" }, "bad-ids"],
-    [{ ids: [1, 2, 3] }, "bad-ids"],
+  const bad = [
+    [{ id: "../evil", category: "disney" }, 400, "bad-id"],
+    [{ id: "under-the-sea", category: "jazz" }, 400, "bad-category"],
+    [{ id: "nope", category: "disney" }, 400, "unknown-song"],
   ];
-  for (const [body, error] of cases) {
-    const r = await post("/music/order", body);
-    assert.equal(r.status, 400, `refused: ${JSON.stringify(body)}`);
-    const j = await r.json();
-    assert.equal(j.error, error, `refused: ${JSON.stringify(body)}`);
-    assert.ok(typeof j.message === "string" && j.message.length > 10,
-              "with something the sheet can show a parent");
+  const bytes = fs.readFileSync(path.join(MUSIC, "manifest.json"));
+  for (const [body, status, error] of bad) {
+    const res = await post("/music/category", body);
+    assert.equal(res.status, status, JSON.stringify(body));
+    const j = await res.json();
+    assert.equal(j.error, error);
+    assert.ok(typeof j.message === "string" && j.message.length > 10, "a sentence a parent can read");
   }
-  assert.deepEqual(fs.readFileSync(path.join(MUSIC, "manifest.json")), before,
-                   "not one byte of the manifest changed");
+  assert.deepEqual(fs.readFileSync(path.join(MUSIC, "manifest.json")), bytes, "a refusal writes nothing");
+
+  const foreign = await fetch(BASE + "/music/category", { method: "POST",
+    headers: { "Content-Type": "application/json", "Sec-Fetch-Site": "cross-site" },
+    body: JSON.stringify({ id: "under-the-sea", category: "disney" }) });
+  assert.equal(foreign.status, 403, "only the hub's own pages may write the song list");
 });
 
-test("with no Drive folder chosen there is nothing to arrange, and it says so", async () => {
+test("Arrange is gone: POST /music/order no longer rewrites ranks", async () => {
+  const bytes = fs.readFileSync(path.join(MUSIC, "manifest.json"));
+  const r = await post("/music/order", { ids: manifest().songs.map(x => x.id).reverse() });
+  assert.notEqual(r.status, 200);
+  assert.deepEqual(fs.readFileSync(path.join(MUSIC, "manifest.json")), bytes);
+});
+
+// The helper classifies a new song as it is added (spec 2026-10-31 "New songs"):
+// a stand-in provider on loopback answers, so no key and no network are used.
+test("the configured helper sorts a new song into Disney, Top hits or neither, and never blocks the add", async () => {
+  const asked = [];
+  let answer = "disney";
+  const fake = (await import("node:http")).createServer((req, res) => {
+    let body = "";
+    req.on("data", c => { body += c; });
+    req.on("end", () => {
+      let prompt = "";
+      try { prompt = JSON.parse(body).contents[0].parts.map(p => p.text || "").join(" "); } catch {}
+      asked.push(prompt);
+      if (answer === "refuse") { res.writeHead(500).end("{}"); return; }
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({
+        candidates: [{ content: { parts: [{ text: JSON.stringify({ text: answer, uncertain: [] }) }] } }] }));
+    });
+  });
+  await new Promise(r => fake.listen(0, "127.0.0.1", r));
+  await stopHub();
+  await startHub({ ERA_YTDLP: BIN, ERA_AI_URL: `http://127.0.0.1:${fake.address().port}` });
+  try {
+    fs.writeFileSync(path.join(DATA, "ai-config.json"), JSON.stringify({ vision: { provider: "google", apiKey: "test-key-not-real" } }));
+    assert.equal((await post("/integrations/drive/localfolder", { folderPath: INSIDE })).status, 204);
+    const add = async (id, title) => {
+      ctl({ mode: "ok", id, title, duration: 120 });
+      assert.equal((await post("/music/add", { url: "https://www.youtube.com/watch?v=" + id })).status, 202);
+      const last = await settled();
+      assert.equal(last.ok, true, last.error || "");
+      return manifest().songs.find(x => x.id === last.id);
+    };
+    assert.equal((await add("cat1", "Synthetic Cartoon Song")).category, "disney");
+    assert.ok(asked.some(p => p.includes("Synthetic Cartoon Song")), "the helper is asked about the song's title");
+    answer = "top-hits";
+    assert.equal((await add("cat2", "Synthetic Chart Song")).category, "top-hits");
+    answer = "probably a lullaby";
+    assert.equal("category" in (await add("cat3", "Synthetic Unclear Song")), false, "an unclear answer is none");
+    answer = "refuse";
+    const refused = await add("cat4", "Synthetic Refused Song");
+    assert.equal("category" in refused, false, "a helper that fails leaves no category");
+    assert.ok(refused.addedAt, "and the add still succeeded");
+    answer = "top-hits";
+    assert.equal((await post("/music/category", { id: refused.id, category: "disney" })).status, 200);
+    assert.equal((await add("cat4", "Synthetic Refused Song")).category, "disney",
+      "a re-add keeps the category a parent chose");
+  } finally {
+    try { fs.rmSync(path.join(DATA, "ai-config.json")); } catch {}
+    fake.closeAllConnections();
+    await new Promise(r => fake.close(r));
+  }
+});
+
+test("with no Drive folder chosen a category cannot be saved, and it says so", async () => {
   await stopHub();
   // fresh <DATA>, and NO mount to adopt: since 9/15 a hub beside a root whose
   // New ERA Content already has a library takes it by itself (drive.js
@@ -617,7 +644,7 @@ test("with no Drive folder chosen there is nothing to arrange, and it says so", 
   // chosen" needs the roots seam emptied, or the case tests the wrong state.
   await startHub({ ERA_YTDLP: BIN, ERA_DRIVE_LOCAL_ROOTS: "" });
 
-  const r = await post("/music/order", { ids: ["let-it-go"] });
+  const r = await post("/music/category", { id: "let-it-go", category: "disney" });
   assert.equal(r.status, 409, "a refusal the sheet can render, not a crash");
   assert.equal((await r.json()).error, "needs-local-drive");
 });
