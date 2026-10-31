@@ -1189,11 +1189,21 @@ test('several questions in a row go to the model as an open question; a single s
     const result = await (await s.request('/choices', { text })).json();
     assert.equal(result.kind, 'yes-no', text);
   }
-  // The "or" form is unchanged: the alternatives shortcut reads its last question, as before.
+  // The "or" form with a question before it is the same list: the model, never the last question's two.
+  const or = 'Do you want water? Do you want to wait, or do you want something else?';
+  assert.equal(localChoices(or), null);
+  const listed = await (await s.request('/choices', { text: or })).json();
+  assert.equal(listed.kind, 'adapter'); assert.deepEqual(seen.at(-1), { text: or, shape: 'open' });
+  assert.deepEqual(listed.choices.map(choice => choice.label), ['Water', 'Wait', 'Something else']);
+  // A single either/or question stays local, a stem in each half or not; a restart still means the last question.
   const before = seen.length;
-  const or = await (await s.request('/choices', { text: 'Do you want water? Do you want to wait, or do you want something else?' })).json();
-  assert.equal(or.kind, 'alternatives'); assert.deepEqual(or.choices.map(choice => choice.label), ['Wait', 'Something else']);
-  assert.equal(seen.length, before, 'no model request');
+  for (const [text, labels] of [['Do you want water or juice?', ['Water', 'Juice']], ['Are you hot or are you cold?', ['Hot', 'Cold']],
+    ['Do you want to go outside, or do you want to stay inside?', ['Go outside', 'Stay inside']],
+    ['Would you like juice or water? Sorry. Do you want chicken, sushi, or wine?', ['Chicken', 'Sushi', 'Wine']]]) {
+    const result = await (await s.request('/choices', { text })).json();
+    assert.equal(result.kind, 'alternatives', text); assert.deepEqual(result.choices.map(choice => choice.label), labels, text);
+  }
+  assert.equal(seen.length, before, 'no model request for them');
 });
 
 test('the instructions say several short questions in a row are alternatives', async () => {

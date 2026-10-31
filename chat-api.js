@@ -390,6 +390,10 @@ const OPEN = /^(?:who|what|where|when|why|how|which|tell me|tell us|say|describe
 const YES_NO_STEM = /\b(?:do you want|do you wanna|would you like|do you|are you|is it|is that|can you|could you|would you|will you|should we|can we|are we)\b/gi;
 // A partner who restarts ("No wait.", "Sorry.", "Hmm, okay.") means the last question only.
 const RESTART = /\b(?:no wait|sorry|actually|never mind|nevermind|scratch that|i mean|hmm,? okay|let me ask again)\b/i;
+// Two or more question sentences with no restart between them; a bare choice
+// prompt ("What do you like? Music or a story?") only opens the one question.
+const questionsInRow = text => typeof text === 'string' && !RESTART.test(text) &&
+  (text.match(/[^.?!]+[.?!]*/g) || []).filter(part => /\?\s*$/.test(part) && !OPENER.test(part.trim())).length >= 2;
 function severalQuestions(text) {
   if (typeof text !== 'string' || RESTART.test(text)) return false;
   const words = text.trim().split(/\s+/).filter(Boolean).length;
@@ -411,6 +415,9 @@ function localChoices(text) {
   const glyphs = glyphChoices(trimmed);
   if (glyphs) return glyphs;
   if (/\bor\b/i.test(trimmed)) {
+    // Questions in a row ("Do you want water? Do you want to wait, or …?") are
+    // one list for the model; the last question's halves alone would drop the first.
+    if (questionsInRow(text)) return null;
     const named = namedChoices(trimmed);
     if (named) return named;
     const prefix = new RegExp('^' + CHOICE_PROMPT + String.raw`\s*[:,.!?]?\s+`, 'i');
