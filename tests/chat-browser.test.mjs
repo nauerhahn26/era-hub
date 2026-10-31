@@ -573,7 +573,9 @@ test('Listen for <name>: the switch streams room audio as an ear, a wake utteran
   assert.equal(await toggle.isDisabled(), false);
   const [wakeBox, lockBox] = await page.evaluate(() => ['#wakeToggle', '#stripLock'].map(id => document.querySelector(id).getBoundingClientRect().toJSON()));
   assert.ok(wakeBox.right <= lockBox.left, 'the switch is left of the lock');
-  await page.waitForTimeout(200); assert.equal(await earFrames(), 0); assert.equal(await page.locator('#wakeBanner').isVisible(), false);
+  await page.waitForTimeout(200); assert.equal(await earFrames(), 0);
+  // No recording notices on the page (spec 2026-10-28 §10): the lit dot and the status line are the signal.
+  assert.equal(await page.locator('#wakeBanner, #testModeBanner').count(), 0, 'no banners');
   await toggle.click(); assert.equal(await toggle.getAttribute('aria-pressed'), 'false', 'a mouse or gaze click does not switch it');
   // On: the ear opens and frames flow with no hold.
   await touch('#wakeToggle');
@@ -584,8 +586,7 @@ test('Listen for <name>: the switch streams room audio as an ear, a wake utteran
   await page.waitForFunction(ear => window.__frames.filter(frame => frame.gen === ear).length >= 5, EAR, { timeout: 5000 });
   assert.equal((await toggle.textContent()).trim(), 'Listen for Ellie: on');
   assert.equal(await page.locator('#phase').textContent(), 'Listening for Ellie');
-  assert.equal(await page.locator('#wakeBanner').isVisible(), true);
-  assert.match(await page.locator('#wakeBanner').textContent(), /room audio/i);
+  assert.equal(await page.evaluate(() => document.body.dataset.ear), 'on', 'the dot is lit');
   assert.ok(await page.locator('#grid .tile.yes.dwell').count() === 1, 'tiles stay live in ear mode');
   // A wake utterance: its staged batch reveals through the window path, the strip shows the question.
   await emit({ type: 'ear', state: 'listening', earId: 'ear-1', generation: EAR });
@@ -639,7 +640,7 @@ test('Listen for <name>: the switch streams room audio as an ear, a wake utteran
   await emit({ type: 'ear', state: 'off', reason: 'off', earId: 'ear-1', generation: holdGen });
   await page.waitForTimeout(200); const stopped = await page.evaluate(() => window.__frames.length); await page.waitForTimeout(500);
   assert.equal(await page.evaluate(() => window.__frames.length), stopped, 'no frames once the ear is off');
-  assert.equal(await page.locator('#wakeBanner').isVisible(), false);
+  assert.equal(await page.evaluate(() => document.body.dataset.ear), 'off', 'the dot is out');
   assert.deepEqual(errors, []);
 });
 
@@ -810,5 +811,44 @@ test('Clear in the top bar drops the current question: strip order, off when the
   await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Capturing question');
   assert.equal(await clear.isDisabled(), true, 'off during a hold');
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  assert.deepEqual(f.errors, []);
+});
+
+test('the ear turns itself off when idle: a gentle status line, no countdown, the switch reads off and it stays off (spec 2026-10-28 §10)', { timeout: 90000 }, async t => {
+  const f = await earFixture(t);
+  const page = await f.open();
+  const phase = () => page.locator('#phase').textContent();
+  assert.equal(await phase(), 'Listening for Ellie');
+  await f.emit(page, { type: 'ear', state: 'warning', remainingMs: 120000, earId: 'ear-1', generation: f.EAR });
+  await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Listening turns off in 2 minutes');
+  assert.equal(await page.evaluate(() => document.body.dataset.ear), 'on', 'the dot stays lit');
+  await page.waitForTimeout(1200);
+  assert.equal(await phase(), 'Listening turns off in 2 minutes', 'no countdown');
+  // A wake clears the warning: the partner's 30 minutes restart at the hub.
+  await f.emit(page, { type: 'utterance-sealed', ear: true, earId: 'ear-1', windowId: 'w-1', seq: 1, text: 'music or a story?', windowText: 'music or a story?', generation: f.EAR });
+  await f.emit(page, { type: 'batch-sealed', generation: f.EAR, windowId: 'w-1', seq: 1, kind: 'generated', choices: [{ label: 'Music', say: 'Music' }, { label: 'A story', say: 'A story' }] });
+  await page.waitForSelector('#grid .response');
+  assert.equal(await phase(), 'Your turn');
+  // With her replies showing, the warnings still reach the partner.
+  await f.emit(page, { type: 'ear', state: 'warning', remainingMs: 60000, earId: 'ear-1', generation: f.EAR });
+  await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Listening turns off in 1 minute');
+  const opens = f.controls.filter(body => body.type === 'window' && body.ear === true).length;
+  await f.emit(page, { type: 'ear', state: 'off', reason: 'idle', earId: 'ear-1', generation: f.EAR });
+  await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Listening is off. Touch Listen for Ellie to turn it on');
+  assert.equal(await page.locator('#wakeToggle').getAttribute('aria-pressed'), 'false');
+  assert.equal((await page.locator('#wakeToggle').textContent()).trim(), 'Listen for Ellie: off');
+  assert.equal(await page.evaluate(() => document.body.dataset.ear), 'off', 'the dot is out');
+  await page.waitForTimeout(2500);
+  assert.equal(f.controls.filter(body => body.type === 'window' && body.ear === true).length, opens, 'an idle-off is never re-opened by the page');
+  const frames = await page.evaluate(() => window.__frames.length); await page.waitForTimeout(400);
+  assert.equal(await page.evaluate(() => window.__frames.length), frames, 'nothing more is sent');
+  assert.equal(await phase(), 'Listening is off. Touch Listen for Ellie to turn it on', 'the line stays until the partner acts');
+  // A hold clears it.
+  const cdp = await f.context.newCDPSession(page), box = await page.locator('#ask').boundingBox();
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: box.x + box.width / 2, y: box.y + box.height / 2, id: 1 }] });
+  await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Capturing question');
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await page.waitForTimeout(300);
+  assert.notEqual(await phase(), 'Listening is off. Touch Listen for Ellie to turn it on');
   assert.deepEqual(f.errors, []);
 });
