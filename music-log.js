@@ -6,15 +6,28 @@
 //     legacy.jsonl          this device's pool history from before sharing, once
 //     <YYYY-MM-DD>.jsonl    {t, song, action: play|full|done, fresh?}
 //
-// SCORE. Every pick counts once: partial 1, full 3. A pick is a play start —
-// `play` (a grid door or a hero replay) or `full` with `fresh` (Full song from
-// silence). It becomes full when a `full` for the same song arrives during it
+// SCORE. Every pick counts once, at a base of partial 1 or full 3, decayed by
+// its age (DECAY, below). A pick is a play start — `play` (a grid door or a
+// hero replay) or `full` with `fresh` (Full song from silence). It becomes full when a `full` for the same song arrives during it
 // (Full song authorized) or a `done` does (the song ended naturally). Stop, the
 // clip running out and leaving the page change nothing, so they are never
 // written. Old pool history carries no `fresh` and no `done`, and an old `end`
 // meant either the clip or the song ending; it reads by the same rule: a play
 // followed by a full for the same song before the next pick is full, and a
 // full that follows no play of its own song is a full pick of its own.
+//
+// DECAY. A pick's weight halves every HALF_LIFE (30 days) of its age, the age
+// measured from the pick's START (its `play`, or the fresh/standalone `full`)
+// to now: weight x 0.5^(age / HALF_LIFE). An upgrade to full adds (3 - 1)
+// decayed by that same start, never by the upgrade's own time. A pick dated in
+// the future (another device's clock ahead) counts at age 0. A line with no
+// readable `t` (very old history) counts as UNDATED_AGE old: still above zero,
+// so nothing she has ever played leaves Favorites; it only sinks. Every score
+// shrinks by the same factor as time passes, so the clock alone never swaps two
+// dated songs: the order moves on a new pick. Of two equal picks the later one
+// has decayed a hair less and ranks first; only exactly equal scores fall to
+// the added-time tie-break (music-sections.js). The board's ETag hashes the id
+// ORDER (server.js `~o`), never the scores.
 //
 // THE SAME THREE RULES AS clothing-log.js:
 // 1. WRITES GO TO THE MOUNT ONLY. <DATA>/music/.era is the mirror's
@@ -36,24 +49,40 @@ const SHARED = new Set(["play", "full", "done"]);       // what can move a score
 const NAME_RE = /^(\d{4}-\d{2}-\d{2}|legacy)\.jsonl$/;
 const LEGACY = "legacy.jsonl";
 const PARTIAL = 1, FULL = 3;
+const DAY_MS = 24 * 3600 * 1000;
+// 30 days: a month-old pick counts half and a three-month-old one an eighth, so
+// a favourite she stops playing slides below the songs she plays now within
+// weeks, while a run of plays from last week still holds its place.
+const HALF_LIFE_MS = 30 * DAY_MS;
+// A line with no readable time is from the oldest history there is: a year old
+// (1/4096 of its base), never zero.
+const UNDATED_AGE_MS = 365 * DAY_MS;
 
 // ---- the fold ------------------------------------------------------------------
 // events: one device's stream [{t, song, action, fresh?}] -> Map song -> score.
-function foldScores(events, into) {
+// now: ms since the epoch (tests pin it; the hub passes its clock).
+function decay(t, now) {
+  const ms = Date.parse(t);
+  const age = Number.isFinite(ms) ? Math.max(0, now - ms) : UNDATED_AGE_MS;
+  return Math.pow(0.5, age / HALF_LIFE_MS);
+}
+function foldScores(events, into, now) {
   const out = into instanceof Map ? into : new Map();
+  const at = Number.isFinite(now) ? now : Date.now();
   const list = (Array.isArray(events) ? events : [])
     .filter(e => e && typeof e.song === "string" && typeof e.action === "string")
     .slice().sort((a, b) => String(a.t || "").localeCompare(String(b.t || "")));
   const add = (song, n) => out.set(song, (out.get(song) || 0) + n);
-  let cur = null;   // {song, full}: the pick in progress on this device
+  let cur = null;   // {song, full, w}: the pick in progress on this device, w its start's decay
+  const start = (e, full) => { cur = { song: e.song, full, w: decay(e.t, at) }; add(e.song, (full ? FULL : PARTIAL) * cur.w); };
+  const upgrade = () => { cur.full = true; add(cur.song, (FULL - PARTIAL) * cur.w); };
   for (const e of list) {
-    if (e.action === "play") { cur = { song: e.song, full: false }; add(e.song, PARTIAL); }
+    if (e.action === "play") start(e, false);
     else if (e.action === "full") {
-      if (!e.fresh && cur && cur.song === e.song) {
-        if (!cur.full) { cur.full = true; add(e.song, FULL - PARTIAL); }
-      } else { cur = { song: e.song, full: true }; add(e.song, FULL); }
+      if (!e.fresh && cur && cur.song === e.song) { if (!cur.full) upgrade(); }
+      else start(e, true);
     } else if (e.action === "done") {
-      if (cur && cur.song === e.song && !cur.full) { cur.full = true; add(e.song, FULL - PARTIAL); }
+      if (cur && cur.song === e.song && !cur.full) upgrade();
     }
     // stop / clip / end: the pick stays as it is (partial unless already full)
   }
@@ -113,10 +142,12 @@ function poolMusicEvents(poolRoot, deviceId) {
 }
 
 // ---- openMusicLog ---------------------------------------------------------------
-// {dataDir, poolRoot, driveFolder, deviceId} — dataDir is READ ONLY (the
-// mirror's delivery point), driveFolder is where this device writes.
+// {dataDir, poolRoot, driveFolder, deviceId, now?} — dataDir is READ ONLY (the
+// mirror's delivery point), driveFolder is where this device writes; now() is
+// the clock scores decay against (Date.now unless a test pins it).
 let warned = false;
-function openMusicLog({ dataDir, poolRoot, driveFolder, deviceId } = {}) {
+function openMusicLog({ dataDir, poolRoot, driveFolder, deviceId, now } = {}) {
+  const clock = typeof now === "function" ? now : Date.now;
   const own = slug(deviceId) || "hub";
   const ownPoolId = String(deviceId || "");
   const mount = driveFolder ? String(driveFolder) : null;
@@ -163,14 +194,15 @@ function openMusicLog({ dataDir, poolRoot, driveFolder, deviceId } = {}) {
   // device from what the mirror delivered.
   function scores() {
     const out = new Map();
+    const at = clock();
     try {
-      foldScores(poolMusicEvents(poolRoot, ownPoolId), out);
+      foldScores(poolMusicEvents(poolRoot, ownPoolId), out, at);
       const root = path.join(String(dataDir || ""), "music", ERA, "plays");
       for (const device of dirsOf(root)) {
         if (device === own) continue;
         const dir = path.join(root, device), lines = [];
         for (const name of filesOf(dir)) if (NAME_RE.test(name)) lines.push(...cachedLines(path.join(dir, name), shared));
-        foldScores(lines, out);
+        foldScores(lines, out, at);
       }
     } catch { /* rule 3: whatever was read stands */ }
     return out;
@@ -179,4 +211,4 @@ function openMusicLog({ dataDir, poolRoot, driveFolder, deviceId } = {}) {
   return { record, scores };
 }
 
-module.exports = { foldScores, openMusicLog, poolMusicEvents };
+module.exports = { foldScores, openMusicLog, poolMusicEvents, HALF_LIFE_MS };

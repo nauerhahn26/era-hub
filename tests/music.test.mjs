@@ -346,10 +346,12 @@ test("plays reorder the sections on the next build, and only the ETag's order pa
   assert.notEqual(etag2, etag1);
   const recipe = await r2.json();
   assert.equal(recipe.root, "songs-fav", "once she has favorites, Music opens on them");
-  // scores 3,3,1,1: ties newest added first (song-3 09-03 before song-2 09-02; song-7 before song-5)
-  assert.deepEqual(songsAt(boardOf(recipe, "songs-fav")), ["song-3", "song-2", "song-7", "song-5"]);
-  assert.deepEqual(songsAt(boardOf(recipe, "songs-all")).slice(0, 5), ["song-3", "song-2", "song-7", "song-5", "song-10"]);
-  assert.deepEqual(songsAt(boardOf(recipe, "songs-top-hits")), ["song-3", "song-2", "song-1"]);
+  // scores 3,3,1,1, decayed by age (music-log.js DECAY): of two equal picks the
+  // later one has decayed a hair less, so song-2 (picked after song-3) leads and
+  // song-7 (after song-5) leads; unplayed songs follow, newest added first
+  assert.deepEqual(songsAt(boardOf(recipe, "songs-fav")), ["song-2", "song-3", "song-7", "song-5"]);
+  assert.deepEqual(songsAt(boardOf(recipe, "songs-all")).slice(0, 5), ["song-2", "song-3", "song-7", "song-5", "song-10"]);
+  assert.deepEqual(songsAt(boardOf(recipe, "songs-top-hits")), ["song-2", "song-3", "song-1"]);
   assert.deepEqual(songsAt(boardOf(recipe, "songs-new")), BY_ADDED.slice(0, 9), "New never reorders by score");
   const r3 = await fetch(`${BASE}/recipes/songs.json`, { headers: { "If-None-Match": etag2 } });
   assert.equal(r3.status, 304, "nothing moved since: 304");
@@ -360,7 +362,7 @@ test("Full song from silence is a full pick of its own", async () => {
   assert.equal((await event({ songId: "song-9", action: "full", fresh: true })).status, 204);
   const after = songsAt(boardOf(await recipeNow(), "songs-fav"));
   assert.notDeepEqual(after, before);
-  assert.deepEqual(after.slice(0, 3), ["song-9", "song-3", "song-2"], "score 3, newest added of the three");
+  assert.deepEqual(after.slice(0, 3), ["song-9", "song-2", "song-3"], "score 3, the latest pick of the three");
 });
 
 test("/music media: Accept-Ranges + immutable + exact bytes; Range 206/416", async () => {

@@ -46,3 +46,21 @@ Maintainer authorized build and publish on 2026-10-31.
   and in the score tie-break alike (music-sections.js), so every device orders
   the existing library the same way.
 - Gate: 207 passed, 0 failed (run 2026-10-31T18-28-56Z-0863608), rerun after the review change.
+
+## Decay (2026-11-01)
+
+The maintainer: a song played a lot months ago but rarely now must fall from
+the top. Spec "Score" / "Decay".
+
+- [x] Tests first (`tests/music-log.test.mjs`): ten full picks 120 days ago
+  rank below three this week; one pick exactly a half-life old counts half;
+  an upgrade decays by the pick's start; a future `t` clamps to age 0; a line
+  with no readable `t` stays above zero and below a dated pick; `scores()`
+  folds at the hub's clock or a pinned `now`. Existing integer assertions fold
+  at a fixed `now` at the fixtures' start.
+- [x] `music-log.js`: `HALF_LIFE_MS` (30 days), `foldScores(events, into, now)`,
+  `openMusicLog({..., now})`; undated lines weigh as a year old.
+- [x] `tests/music.test.mjs`: equal picks made seconds apart now rank the later
+  first (song-2 before song-3), where they used to tie and fall to added time.
+- [x] The `~o` ETag part hashes `[root, orders]` (id order), unchanged.
+
