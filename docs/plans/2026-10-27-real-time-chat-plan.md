@@ -709,7 +709,10 @@ hidden half hour, 5 "Reload". Only 3 and 5 change code.
 - [x] R2 page: PROMPT_READINGS 2 (spec §6); chat-prompt tests say two
       readings then quiet; the partner dialog's sentence says two. Built 11/1:
       prompt.js, chat-prompt 9/9, the browser §6 case counts six clips.
-- [ ] R3 page + hub: Chat reloads on a changed hub build (spec §16): build in
+- [x] R3 page + hub: Chat reloads on a changed hub build (spec §16): build in
       `ready` from the hub's options; page remembers its build from
       `/version`, re-asks on session loss (5 s, 3 min), `ready`, visibility;
       reload deferred past a hold/press; same build = nothing. Tests first.
+      Built 11/1: chat-api `build` option (value or function; unknown =
+      omitted), app.js `window.__chatFollow` seam (reload, pollMs, limitMs)
+      for the browser case; chat-api 69/69, chat-browser 17/17.
