@@ -21,9 +21,14 @@ overlaps `clothing-rank.js` or `clothing-worker.js`.
       tests/clothing-diversity.test.mjs` all green.
 - [x] T6 Comments in `clothing-worker.js` near `browse()` and in `clothing-rank.js` name the 11/1 ruling;
       README / docs nearest the change updated if they describe the browse grids' order.
-- [ ] T7 Full gate detached, `gate-wait.sh`; stamp recorded here.
+- [x] T7 Full gate detached, `gate-wait.sh`: **208 passed, 0 failed** on 8b35c95 (run
+      `2026-11-01T20-57-45Z-daa4aee`, stamp `/tmp/era-gate-green/daa4aeeb55543eafce7457bdbd762c56a6f5c2a3`).
 - [ ] T8 Land on dad's word; push to a device on dad's word; release on dad's word.
 
 ## Retrospective
 
-(filled at close)
+- The deal was already weather-coherent (9/29 spectrum); the whole gap was the browse grids. The
+  orientation question ("sort or filter, which pages, which number") was the right one to ask first.
+- The builder caught a wrong premise in the spec (grids were in wardrobe.json order, not id order) by
+  running the accessories layout snapshot; the fix was to leave offline boards byte for byte alone.
+- One function, one call site, two suites extended, no new suite to register. Gate ran clean first time.
