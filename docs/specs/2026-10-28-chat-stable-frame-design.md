@@ -286,7 +286,12 @@ cannot silence the mic when she talks. You have to handle it."
   tier (ear and main), to a button window and to a held question, at the
   seal, and to the partials the page shows and speculates on.
 - Ear records (§12) gain `clip` (on/off, source, the text) and `echo` (what
-  arrived, which clip matched, what was kept or `dropped`). The diagnostics
-  box shows them.
+  arrived, which clip matched, what was kept or `dropped`; turn-ends and
+  finals only, never partials). The diagnostics box shows this page's own
+  clip starts; `echo` lines live only in the hub's log (the hub sends the
+  page no ear records). Built 11/1: a one-word turn also goes when that word
+  is in any clip in play (her "Yes." heard back; her name split off the
+  reading), a clip whose end never arrives counts as ended after 30 s, and
+  the words that survive keep their casing and punctuation.
 - Not done: a client-side energy detector for "voice while muted" (no mute
   remains), and a detector that knows her voice from the partner's.
