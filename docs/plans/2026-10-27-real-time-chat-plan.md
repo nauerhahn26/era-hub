@@ -688,7 +688,7 @@ Dad: "you cannot silence the mic when she talks. You have to handle it."
 ## A failed reply never ends the session + the question re-renders (11/1 morning) — spec §14, §15, §10 addendum
 Cause of the morning's lost replies: the reply service account had no credit
 (dad tops it up). The software faults around it:
-- [ ] F1 page: `onChoicesError` fails the turn only (no `shutdown`): session,
+- [x] F1 page: `onChoicesError` fails the turn only (no `shutdown`): session,
       socket, ear, window stay; the ear resumes; `content.choicesError` from
       the event's code. Hub: ear record `fault {code}`, one log line, `on`
       ear records (open/resume with tier). Tests first (chat-ui/chat-browser:

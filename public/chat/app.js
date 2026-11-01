@@ -247,7 +247,7 @@ function waitForAudioDrain(pending, timeoutMs = 4000) {
 async function json(url, options = {}) {
   const r = await fetch(url, { ...options, headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers } });
   const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(body.message || body.error || 'The speech service is unavailable.');
+  if (!r.ok) throw Object.assign(new Error(body.message || body.error || 'The speech service is unavailable.'), typeof body.error === 'string' ? { code: body.error } : {});
   return body;
 }
 const notice = text => { $('notice').textContent = text || ''; };
@@ -311,7 +311,15 @@ const controller = createChatController({
       shape: result.shape, recallRejected: result.recallRejected, world: result.world };
     return result;
   },
-  onChoicesError: () => { metrics.end(questionMetric, 'failed', 'choices'); return shutdown('cancel', true); },
+  // A failed reply fails the turn only (spec 2026-10-28 §14): the session, the
+  // audio socket, the microphone, the ear and a press window stay; the hub's
+  // code goes in the record. The ear was never paused for a wake question, and
+  // the hub resumes it after a hold's final as always.
+  onChoicesError: error => {
+    const code = typeof error?.code === 'string' && /^[a-z][a-z0-9-]{0,39}$/.test(error.code) ? error.code : null;
+    if (code) turnLog.content(questionMetric, { choicesError: code });
+    metrics.end(questionMetric, 'failed', 'choices');
+  },
   stopSpeech: () => { reader?.cancel(); currentSpeech++; metrics.end(speechMetric, 'cancelled', 'interrupted'); speechMetric = null; voice.stop(); },
   prefetch: choices => {
     voice.prefetch(choices, { role: 'her' });
@@ -906,7 +914,7 @@ function stagingEvent(data) {
       pictureWarm: data.pictureWarm, shape: data.shape, recallRejected: data.recallRejected, world: data.world, timings: data.timings };
     record.done?.();
   } else if (data.type === 'choices-error') {
-    record.error = new Error('Replies are unavailable. Your phrases still work.');
+    record.error = Object.assign(new Error('Replies are unavailable. Your phrases still work.'), typeof data.error === 'string' ? { code: data.error } : {});
     record.done?.(record.error);
   }
 }

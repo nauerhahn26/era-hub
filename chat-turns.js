@@ -81,7 +81,10 @@ const RECORD = shape({
     // A question heard by the wake word (§8).
     wake: v => v === true,
     // Yes and No in full were on screen when she chose (stable frame §11).
-    answered: v => v === true }),
+    answered: v => v === true,
+    // A failed reply (stable frame §14): the hub's code (never the service's text);
+    // `retried`: the question was asked again from the question strip (§15).
+    choicesError: str(40, /^[a-z][a-z0-9-]*$/), retried: v => v === true }),
   usage: shape({ reply: shape({ model: nullable(str(128)), inputTokens: int(), cachedTokens: int(), outputTokens: int() }),
     audioSeconds: num(3600), socketSeconds: nullable(num(86400)),
     voice: shape({ chars: int(10000), cache: oneOf(['hit', 'pending', 'miss', 'device']), fetchedChars: int(100000) }) }),
@@ -92,12 +95,14 @@ const RECORD = shape({
 // What the ear heard (stable frame spec 2026-10-28 §12): one line per ear
 // event, beside the turn records in the day's log. No id (the turn tools skip
 // it), no audio, the words capped at 300 characters.
-const EAR_EVENTS = ['turn', 'tier', 'seal', 'pause', 'resume', 'off', 'socket', 'clip', 'echo'];
+const EAR_EVENTS = ['turn', 'tier', 'seal', 'pause', 'resume', 'off', 'socket', 'clip', 'echo', 'on', 'fault'];
 const EAR = shape({ event: oneOf(EAR_EVENTS), at: num(Number.MAX_SAFE_INTEGER), earId: str(32, /^[0-9a-f]+$/), tier: oneOf(['ear', 'main']),
   text: str(300), wake: oneOf(['question', 'name', 'none']), question: str(300), reason: str(32, /^[a-z][a-z-]*$/), replayedMs: int(10000),
   on: v => typeof v === 'boolean', source: oneOf(['page', 'other']), pageAt: num(Number.MAX_SAFE_INTEGER),
   // Her clip is handled (§13): what an echo turn was, the runs of her clip it matched, what was kept ('dropped': nothing).
-  heard: str(300), clip: str(300), kept: str(300) }, ['event', 'at']);
+  heard: str(300), clip: str(300), kept: str(300),
+  // §14: the ear opened (resumed false) or resumed (true); a failed reply job's code while it listened.
+  resumed: v => typeof v === 'boolean', code: str(40, /^[a-z][a-z0-9-]*$/) }, ['event', 'at']);
 const earWords = v => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 300) : v);
 function validateEar(value) {
   if (!isObject(value)) return null;

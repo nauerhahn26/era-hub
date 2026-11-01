@@ -673,14 +673,16 @@ async function earFixture(t, settings = {}) {
   const browser = await chromium.launch({ headless: true, args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', `--use-file-for-fake-audio-capture=${wav}`, '--autoplay-policy=no-user-gesture-required'] });
   t.after(async () => { await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive: true, force: true }); });
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, hasTouch: true, permissions: ['microphone'] });
-  const controls = [], errors = [], EAR = 7;
+  const controls = [], errors = [], turns = [], requests = [], EAR = 7;
+  // The replies a /choices request gets (§15's ask-again goes there); a function of the body, or a status.
+  const fixture = { choices: () => ({ kind: 'alternatives', choices: [{ label: 'Music', say: 'Music' }, { label: 'A story', say: 'A story' }] }) };
   await context.route(url => url.origin !== base, route => route.abort('blockedbyclient'));
   await context.addInitScript(() => {
     window.__frames = []; window.__clips = [];
     window.EventSource = class { constructor(url) { if (String(url).includes('/sessions/')) window.__events = this; } close() { this.closed = true; } };
     window.WebSocket = class {
       static OPEN = 1;
-      constructor() { this.readyState = 0; this.bufferedAmount = 0; setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 10); }
+      constructor() { this.readyState = 0; this.bufferedAmount = 0; window.__socket = this; setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 10); }
       send(buffer) { const view = new DataView(buffer), pcm = new Uint8Array(buffer, 8);
         window.__frames.push({ gen: view.getUint32(0, true), at: performance.timeOrigin + performance.now(), silent: pcm.every(byte => byte === 0) }); }
       close() { this.readyState = 3; }
@@ -701,10 +703,15 @@ async function earFixture(t, settings = {}) {
   await context.route('**/chat/api/**', async route => {
     const req = route.request(), url = new URL(req.url()); let result = {};
     if (url.pathname === '/chat/api/state') return route.continue();
+    requests.push(`${req.method()} ${url.pathname}`);
     if (url.pathname.endsWith('/config')) result = { runtime: { available: true, kind: 'built-in', capabilities: { streaming: true, wake: true } }, choices: { available: true } };
     else if (url.pathname.endsWith('/sessions') && req.method() === 'POST') result = { id: 'gate-session' };
     else if (url.pathname.endsWith('/control')) { const body = req.postDataJSON(); controls.push(body); result = { ok: true, generation: EAR, earId: 'ear-1' }; }
-    else if (url.pathname.endsWith('/choices')) result = { kind: 'alternatives', choices: [{ label: 'Music', say: 'Music' }, { label: 'A story', say: 'A story' }] };
+    else if (url.pathname.endsWith('/choices')) {
+      const answer = fixture.choices(req.postDataJSON());
+      if (Number.isInteger(answer)) return route.fulfill({ status: answer, contentType: 'application/json', body: JSON.stringify({ error: 'generation-unavailable' }) }).catch(() => {});
+      result = answer;
+    } else if (url.pathname === '/chat/api/turns' && req.method() === 'POST') turns.push(req.postDataJSON());
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(result) }).catch(() => {});
   });
   async function open({ ear = true } = {}) {
@@ -722,7 +729,7 @@ async function earFixture(t, settings = {}) {
   // The ear frames sent in [from, to] (epoch ms), and how many carried sound.
   const heard = (page, from, to) => page.evaluate(({ ear, from, to }) => { const frames = window.__frames.filter(frame => frame.gen === ear && frame.at > from && frame.at < to);
     return { frames: frames.length, loud: frames.filter(frame => !frame.silent).length }; }, { ear: EAR, from, to });
-  return { context, controls, errors, EAR, open, emit, heard };
+  return { context, controls, errors, turns, requests, fixture, EAR, open, emit, heard };
 }
 
 test('the read-aloud is heard, never silenced: the frames keep their sound and the hub gets the whole reading as one clip, then each spoken piece', { timeout: 90000 }, async t => {
@@ -875,6 +882,43 @@ test('the ear turns itself off when idle: a gentle status line, no countdown, th
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await page.waitForTimeout(300);
   assert.notEqual(await phase(), 'Listening is off. Touch Listen for Ellie to turn it on');
+  assert.deepEqual(f.errors, []);
+});
+
+// A failed reply never ends the session (spec 2026-10-28 §14; 11/1: the reply
+// service had no credit and every wake question's failure closed the session,
+// the socket and the ear, so the partner's next question was never heard).
+test('a failed reply fails the turn only (spec 2026-10-28 §14): the session, socket and ear stay, the question stays on the strip, the next wake question gets its replies, the record keeps the hub\'s code', { timeout: 90000 }, async t => {
+  const f = await earFixture(t, { chatTestMode: true });
+  const page = await f.open();
+  const before = { controls: f.controls.length, requests: f.requests.length };
+  await f.emit(page, { type: 'utterance-sealed', ear: true, earId: 'ear-1', windowId: 'w-1', seq: 1, text: 'does your tummy hurt?', windowText: 'does your tummy hurt?', generation: f.EAR });
+  await f.emit(page, { type: 'choices-error', error: 'generation-unavailable', generation: f.EAR, windowId: 'w-1', seq: 1 });
+  await page.waitForFunction(() => document.querySelector('#notice').textContent === 'Replies are unavailable. Your phrases still work.');
+  assert.equal(await page.locator('#grid .tile.question .label').textContent(), 'does your tummy hurt?', 'the question stays on the strip');
+  assert.equal(await page.locator('#phase').textContent(), 'Listening for Ellie');
+  assert.equal(await page.evaluate(() => document.body.dataset.ear), 'on', 'the ear is still on');
+  assert.equal(await page.evaluate(() => window.__socket.readyState), 1, 'the audio socket is open');
+  assert.notEqual(await page.evaluate(() => window.__events.closed), true, 'the event stream is open');
+  const framesAt = await page.evaluate(ear => window.__frames.filter(frame => frame.gen === ear).length, f.EAR);
+  await page.waitForFunction(({ ear, at }) => window.__frames.filter(frame => frame.gen === ear).length > at + 3, { ear: f.EAR, at: framesAt }, { timeout: 5000 });
+  await page.waitForTimeout(1500); // longer than the page's reopen delay
+  assert.deepEqual(f.controls.slice(before.controls).filter(body => body.type !== 'clip'), [], 'no close, cancel, pause or ear change');
+  assert.deepEqual(f.requests.slice(before.requests).filter(line => /^DELETE|\/sessions$/.test(line)), [], 'no session ended or started');
+  // Her phrases still work; Clear is there for the failed question.
+  assert.equal(await page.locator('#clearQuestion').isDisabled(), false);
+  assert.ok(await page.locator('#grid .tile.yes.dwell').count() === 1);
+  // The record: failed for 'choices', the hub's code kept, never its text.
+  for (let i = 0; i < 100 && !f.turns.some(turn => turn.outcome === 'failed'); i++) await page.waitForTimeout(20);
+  const failed = f.turns.find(turn => turn.outcome === 'failed');
+  assert.ok(failed, 'the failed turn is recorded');
+  assert.deepEqual([failed.reason, failed.content.choicesError, failed.content.transcript, failed.content.wake], ['choices', 'generation-unavailable', 'does your tummy hurt?', true]);
+  // The ear listens on: the next wake question renders its replies.
+  await f.emit(page, { type: 'utterance-sealed', ear: true, earId: 'ear-1', windowId: 'w-2', seq: 1, text: 'music or a story?', windowText: 'music or a story?', generation: f.EAR });
+  await f.emit(page, { type: 'batch-sealed', generation: f.EAR, windowId: 'w-2', seq: 1, kind: 'generated', choices: [{ label: 'Music', say: 'Music' }, { label: 'A story', say: 'A story' }] });
+  await page.waitForFunction(() => document.querySelector('#grid .response .label')?.textContent === 'Music');
+  assert.equal(await page.locator('#grid .tile.question .label').textContent(), 'music or a story?');
+  assert.equal(await page.locator('#notice').textContent(), '', 'the failure line goes with the next question');
   assert.deepEqual(f.errors, []);
 });
 

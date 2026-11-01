@@ -432,3 +432,15 @@ test('yes and no in full (spec 2026-10-28 §11): content.answered, and the answe
   const plain = JSON.parse(t.requests.find(r => r.url === '/chat/api/turns').init.body);
   assert.equal('answered' in plain.content, false); assert.equal(plain.usage?.reply, undefined);
 });
+
+test('a failed reply keeps the hub\'s code (spec 2026-10-28 §14) and a question asked again from the strip is marked (§15); anything else is dropped', async () => {
+  const s = setup(), h = {};
+  s.log.begin(h, 'press', { mode: 'wake' });
+  s.log.content(h, { transcript: 'does your tummy hurt?', choicesError: 'generation-unavailable', retried: true }); s.log.end(h, 'failed', 'choices'); await flush();
+  const record = JSON.parse(s.requests.find(r => r.url === '/chat/api/turns').init.body);
+  assert.deepEqual([record.reason, record.content.choicesError, record.content.retried], ['choices', 'generation-unavailable', true]);
+  const t = setup(), h2 = {};
+  t.log.begin(h2, 'press', {}); t.log.content(h2, { choicesError: 'Your credit balance is too low', retried: 'yes' }); t.log.end(h2, 'failed', 'choices'); await flush();
+  const plain = JSON.parse(t.requests.find(r => r.url === '/chat/api/turns').init.body);
+  assert.equal('choicesError' in plain.content, false); assert.equal('retried' in plain.content, false);
+});

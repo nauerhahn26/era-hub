@@ -483,12 +483,15 @@ test('ear records: each turn and seal with what the wake rule found, pause and r
   assert.equal((await s.control('finish', { seq: s.sent() })).status, 200);
   await until(() => ear('resume').length === 1);
   assert.deepEqual([ear('pause')[0].reason, ear('resume')[0].reason], ['hold', 'final']);
+  // §14: the ear's opening and its resume are written too, so the log shows when it listened at all.
+  assert.deepEqual(ear('on').map(r => [r.tier, r.resumed, r.earId]), [['main', false, opened.earId], ['main', true, opened.earId]]);
+  assert.ok(records.indexOf(ear('on')[0]) < records.indexOf(ear('turn')[0]), 'on comes first');
   assert.equal((await s.control('window', { ear: false })).status, 200);
   assert.deepEqual(ear('off').map(r => r.reason), ['off']);
   const before = records.length;
   assert.equal((await s.control('clip', { on: true, at: 2000, text: 'No.' })).status, 200);
   assert.equal(records.length, before, 'no ear, no clip line');
-  assert.ok(records.every(r => Object.keys(r).every(key => ['event', 'at', 'earId', 'tier', 'text', 'wake', 'question', 'reason', 'replayedMs', 'on', 'source', 'pageAt', 'heard', 'clip', 'kept'].includes(key))));
+  assert.ok(records.every(r => Object.keys(r).every(key => ['event', 'at', 'earId', 'tier', 'text', 'wake', 'question', 'reason', 'replayedMs', 'on', 'source', 'pageAt', 'heard', 'clip', 'kept', 'resumed', 'code'].includes(key))));
 });
 
 test('ear records: a bare name is found as a name; a lost socket is recorded and the ear is off; a broken writer never touches the ear', async t => {
@@ -504,6 +507,34 @@ test('ear records: a bare name is found as a name; a lost socket is recorded and
   await until(() => ear('off').length === 1);
   assert.deepEqual([ear('socket').length, ear('off')[0].reason], [1, 'socket']);
   assert.ok(records.indexOf(ear('socket')[0]) < records.indexOf(ear('off')[0]));
+});
+
+// A failed reply never ends the session (spec 2026-10-28 §14): the reply
+// service refusing every request (11/1: no credit left) fails the turn only.
+test('a failed reply job: choices-error with the hub\'s code, a fault ear record, one log line with the service\'s status and never its text; the ear listens on', async t => {
+  const service = await turnsService(t, { 2: [ENDED('Ellie, what should we cook tonight')], 5: [ENDED('Ellie, what about some soup', 1)] });
+  const records = [], lines = [], ear = earOf(records);
+  const h = await hub(t, { service, env: REPLY_ENV, extra: { onEar: record => { records.push(record); }, log: line => lines.push(line) },
+    fetch: (url, init) => {
+      if (init?.method === 'HEAD') return Promise.resolve(new Response(null));
+      return Promise.resolve(new Response(JSON.stringify({ error: { message: 'Your credit balance is too low (secret account 1234)' } }), { status: 402, headers: { 'Content-Type': 'application/json' } }));
+    } });
+  const s = await h.session();
+  const opened = await s.open({ ear: true });
+  await s.frames(3);
+  await until(() => s.events('choices-error').length === 1);
+  const failed = s.events('choices-error')[0];
+  assert.deepEqual([failed.error, failed.windowId, failed.generation], ['generation-unavailable', s.events('utterance-sealed')[0].windowId, opened.generation]);
+  assert.deepEqual(ear('fault').map(r => [r.code, r.earId]), [['generation-unavailable', opened.earId]]);
+  assert.deepEqual(lines, ['[chat] replies failed: generation-unavailable 402']);
+  assert.ok(!JSON.stringify([records, lines, s.seen]).includes('credit'), 'never the service\'s message text');
+  // The ear was never touched: no off, and the next wake question is sealed and asked.
+  assert.equal(s.events('ear').filter(e => e.state === 'off').length, 0);
+  await s.frames(3);
+  await until(() => s.events('choices-error').length === 2);
+  assert.deepEqual(s.events('utterance-sealed').map(e => e.text), ['what should we cook tonight', 'what about some soup']);
+  assert.equal(ear('fault').length, 2); assert.equal(lines.length, 2);
+  assert.equal(ear('on').length, 1, 'opened once: a failure never closes or reopens the ear');
 });
 
 test('server.js sends the ear\'s lines to the chat-turns writer', async () => {

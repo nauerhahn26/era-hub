@@ -951,7 +951,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
         const response = await fetcher(adapterUrl, { method: 'POST', redirect: 'error', signal,
           headers: { 'Content-Type': 'application/json', ...(env.ERA_CHAT_CHOICES_TOKEN ? { Authorization: 'Bearer ' + env.ERA_CHAT_CHOICES_TOKEN } : {}) },
           body: JSON.stringify(input) });
-        if (!response.ok || !response.body) throw fault(502, 'choices-unavailable');
+        if (!response.ok || !response.body) throw Object.assign(fault(502, 'choices-unavailable'), response.ok ? {} : { httpStatus: response.status });
         let size = 0, chunks = [];
         for await (const chunk of response.body) {
           size += chunk.length;
@@ -1037,9 +1037,17 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     // The hub knows the picture before the page does: warm it now, behind the event.
     if (job.pictures && pick.symbolId) try { job.pictures.stage(pick.symbolId); } catch { /* decorative */ }
   }
+  // A failed reply job (stable frame §14): the hub's code and the reply
+  // service's HTTP status when it answered with one; never its message text.
+  const logLine = typeof options.log === 'function' ? options.log : line => console.log(line);
+  function repliesFailed(session, error) {
+    const code = /^[a-z][a-z0-9-]{0,39}$/.test(String(error?.code || '')) ? error.code : 'choices-unavailable';
+    if (session.ear) earLog(session, 'fault', { code });
+    try { logLine(`[chat] replies failed: ${code}${Number.isSafeInteger(error?.httpStatus) ? ` ${error.httpStatus}` : ''}`); } catch { /* the log never touches Chat */ }
+  }
   function sealChoices(session, job) {
     if (!liveJob(session, job)) return;
-    if (job.error) { job.sealed = true; emit(session, { type: 'choices-error', error: job.error.code || 'choices-unavailable', generation: job.generation, ...windowOf(job) }); return; }
+    if (job.error) { job.sealed = true; repliesFailed(session, job.error); emit(session, { type: 'choices-error', error: job.error.code || 'choices-unavailable', generation: job.generation, ...windowOf(job) }); return; }
     // A batch that arrived whole (a shortcut, the adapter) stages each choice now.
     if (!job.stagedCount) for (const choice of job.result.choices) stageChoice(session, job, choice);
     job.sealed = true;
@@ -1244,6 +1252,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     session.ear = ear; session.ring = [];
     startEarTurn(session, ear);
     emit(session, { type: 'ear', state: 'listening', tier: ear.tier, earId: ear.id, generation: session.generation });
+    earLog(session, 'on', { tier: ear.tier, resumed: false });
     return ear;
   }
   function pauseEar(session, reason) {
@@ -1261,6 +1270,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     startEarTurn(session, ear);
     emit(session, { type: 'ear', state: 'listening', tier: ear.tier, earId: ear.id, generation: session.generation, resumed: true });
     earLog(session, 'resume', { reason });
+    earLog(session, 'on', { tier: ear.tier, resumed: true });
   }
   function closeEar(session, reason) {
     const ear = session.ear;
