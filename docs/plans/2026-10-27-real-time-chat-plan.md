@@ -701,3 +701,14 @@ Cause of the morning's lost replies: the reply service account had no credit
 - [x] F3 page: question strip dwell/click re-renders the replies (spec §15):
       Back's memory or the local set; a failed job is retried once per look;
       the reading re-arms. Tests first in chat-frame/chat-browser.
+
+## Two readings + Chat follows the build (dad, 11/1 afternoon) — spec §6, §16
+Dad's answers 11/1: 1 "Just update" (no hold on the self-update), 2 "Have to
+use Ellie" (no name-free follow-ups), 3 "Only do 2x", 4 "Listen off" after a
+hidden half hour, 5 "Reload". Only 3 and 5 change code.
+- [ ] R2 page: PROMPT_READINGS 2 (spec §6); chat-prompt tests say two
+      readings then quiet; the partner dialog's sentence says two.
+- [ ] R3 page + hub: Chat reloads on a changed hub build (spec §16): build in
+      `ready` from the hub's options; page remembers its build from
+      `/version`, re-asks on session loss (5 s, 3 min), `ready`, visibility;
+      reload deferred past a hold/press; same build = nothing. Tests first.
