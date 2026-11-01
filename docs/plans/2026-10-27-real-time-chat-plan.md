@@ -662,13 +662,13 @@ answers in full (desktop testing only). Home device on build 20261031.2145
 
 ## Her clip is handled, never silenced (dad, 10/31 night) — spec §13
 Dad: "you cannot silence the mic when she talks. You have to handle it."
-- [ ] H1 `chat-echo.js`: pure `stripEcho(turnText, clips, at)` → `{ text, matched }`
+- [x] H1 `chat-echo.js`: pure `stripEcho(turnText, clips, at)` → `{ text, matched }`
       (runs of ≥2 clip words in order removed; one-word clip removes only a
       bare match; empty → `text: ''`); `clipBook` keeping clips for a few
       seconds (start, end, text, source). Tests first: exact echo, partial
       echo, partner words + echo in one turn (both orders), the reading's long
       text with her name inside, a turn after the 3 s tail untouched, Yes./No.
-- [ ] H2 hub: `control {type:'clip'}` replaces `gate` (validation, ear record
+- [x] H2 hub: `control {type:'clip'}` replaces `gate` (validation, ear record
       `clip`); every turn-end/final/settled/partial on ear, main, window and
       hold paths goes through the book; dropped turns seal nothing; `echo`
       ear records; `EAR_EVENTS` + whitelist in chat-turns.

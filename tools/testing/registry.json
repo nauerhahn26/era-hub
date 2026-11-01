@@ -1091,7 +1091,8 @@
         "era-hub/chat-ws.js",
         "era-hub/keepalive-fetch.js",
         "era-hub/buttons.js",
-        "era-hub/server.js"
+        "era-hub/server.js",
+        "era-hub/chat-echo.js"
       ],
       "resources": [
         "owned-loopback-services",
@@ -1122,7 +1123,8 @@
         "era-hub/chat-ws.js",
         "era-hub/keepalive-fetch.js",
         "era-hub/buttons.js",
-        "era-hub/server.js"
+        "era-hub/server.js",
+        "era-hub/chat-echo.js"
       ],
       "resources": [
         "owned-loopback-services",

@@ -320,6 +320,29 @@ test('stop(reason) closes from outside (a lost stream) with no seal', () => {
   assert.deepEqual(m.closes, [{ reason: 'error', seals: 0, windowText: '' }]);
 });
 
+// Her clip (stable frame §13): the hub drops an utterance that was her own
+// words; the machine forgets the unsealed words and the speech since the last
+// seal, so nothing of the echo seals later on quiet frames or a press.
+test('drop: the unsealed words and speech are forgotten; nothing seals from them; later words seal as usual', () => {
+  const m = machine();
+  m.frames(5, true);
+  m.w.partial('do you want chicken');
+  m.w.turnEnd('do you want chicken');
+  m.frames(4, true);
+  m.w.partial("do you want chicken yes I");
+  m.w.drop();
+  assert.equal(m.w.pending, false, 'nothing in flight after a drop');
+  m.frames(16, false);
+  m.at(1500 + 2500);
+  assert.equal(m.seals.length, 1, 'the echo never seals');
+  m.frames(3, true);
+  m.w.partial('do you want chicken or fish');
+  m.w.turnEnd('or fish');
+  assert.deepEqual(m.seals.map(s => s.text), ['do you want chicken', 'or fish']);
+  m.w.press(); assert.equal(m.w.state, 'closed');
+  m.w.drop(); assert.equal(m.w.state, 'closed', 'a closed window ignores a drop');
+});
+
 test('limits can be shortened for tests; the clock is the only time source', () => {
   const m = machine({ silenceMs: 500, capMs: 2000 });
   m.at(499); assert.equal(m.closes.length, 0);

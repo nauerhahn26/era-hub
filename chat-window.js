@@ -14,6 +14,9 @@
 //   no words at all within 10 s        'nothing-said'  zero seals: nothing is submitted
 //   stop(reason) from outside          reason          nothing seals (a lost stream)
 //
+// drop() forgets the words and speech since the last seal: the hub found them
+// to be her own clip (stable frame §13); the window stays open.
+//
 // An utterance "sounds complete" when the streaming service says its turn
 // ended (turnEnd), or, when no such signal comes, after 15 quiet 100 ms frames
 // (1.5 s) following at least 2 energetic ones (the energy gate below, the
@@ -142,6 +145,12 @@ function createWindow({ clock = Date.now, limits = {}, seal = () => {}, close = 
       if (!normalized(heard).includes(normalized(words))) heardWords([sealed, words].filter(Boolean).join(' '));
       trySeal('turn-end');
       tick();
+    },
+    // The utterance in flight was her own clip (stable frame §13): its words
+    // and its speech are forgotten; nothing of it seals.
+    drop() {
+      if (state !== 'open' && state !== 'ending') return;
+      heard = sealed; resetUtterance();
     },
     press() { endUtterance('press'); },
     end,
