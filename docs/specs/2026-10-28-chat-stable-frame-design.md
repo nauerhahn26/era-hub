@@ -118,12 +118,19 @@ cadence, the tile lit while its clip plays. The name is the device's
 works for anyone. The delay is the device's `chatPromptMs` setting, chosen in
 the partner dialog (off, 10, 12, 15 or 20 s; default 12 s).
 
-The timer starts at the reveal. It is cancelled by any dwell progress on a
-tile, a selection, a page or mode swap, a new hold, or the partner dialog
-opening. The reading never blocks her: a dwell during it selects as usual and
-stops the reading. YES and NO are not read. A batch is read at most once.
-The turn record (test mode) gains `content.prompted: true` when a reading
-started and keeps `selected` as usual, so prompted turns can be compared.
+The timer starts at the reveal. It is cancelled by a selection, a page or
+mode swap, a new hold, Clear or Back, or the partner dialog opening. A glance
+does NOT stop it (dad, 10/31 night: "it stops reading just at the first
+glance, which is not a good user experience. It should keep giving her the
+options until she makes a selection"): dwell progress on a tile neither
+cancels the timer nor the reading; until 10/31 it did. The reading never
+blocks her: a dwell during it selects as usual, and the selection stops the
+reading. YES and NO are not read. After a full reading the timer re-arms
+with the same delay, so an unanswered batch is read again, up to three
+readings per batch (then quiet; the partner can repeat the question). The
+turn record (test mode) gains `content.prompted: true` when a reading started
+(and `content.readings: n`) and keeps `selected` as usual, so prompted turns
+can be compared.
 
 ## 7. Her gaze never ends a hold
 

@@ -677,3 +677,10 @@ Dad: "you cannot silence the mic when she talks. You have to handle it."
       voice's text); broadcast carries text; `clip` control; diagnostics box
       shows clip/echo lines; the old gate tests flip to "frames keep flowing".
 - [ ] H4 registry regenerated if launch counts change; spec §9 amended (done).
+- [ ] R1 reading aloud keeps going (spec §6 amended 10/31 night): dwell
+      progress (`.dwell-active`) no longer cancels the timer or the reading;
+      selection, swap, hold, Clear, Back, partner dialog still do; after a
+      full reading the timer re-arms with the same delay, at most three
+      readings per batch; `content.readings`. Tests first in chat-prompt +
+      chat-browser (a glance mid-reading: the reading continues; a selection
+      mid-reading: it stops; the third reading is the last).
