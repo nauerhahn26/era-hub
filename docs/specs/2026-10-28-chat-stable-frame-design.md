@@ -347,3 +347,15 @@ frozen with the rest). On waking the ear was listening again by itself and no
 on. Expected: the first tick after a sleep longer than the idle allowance
 turns the ear off as idle and saves the switch off, like any idle half hour;
 the page shows the gentle line. A pinned test jumps the clock twelve hours.
+
+Built 11/1: the tick alone already did this (the pinned test passed before
+any change; the hub's clock is wall time). What the device did instead: on
+waking, I/O runs before the first timer, and the session the ear lived in
+ended (its event stream closed, which disposes it with no record, or the
+socket or stream was lost), so the page, its switch still on, opened a new
+ear with a fresh half hour. The allowance now belongs to the switch: an ear
+opened again without a wake, hold or press inherits the last activity and
+closes as idle on its first tick; the partner's off, the idle off and the
+partner's own switch-on (`window {ear:true, fresh:true}`) start anew, and a
+hold or press with no ear open restarts it. A session that ends with its ear
+on writes `off (ended)`.

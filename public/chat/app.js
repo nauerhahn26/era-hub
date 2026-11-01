@@ -1234,8 +1234,11 @@ function paintWake() {
   document.body.dataset.ear = ear ? 'on' : 'off';
   paintPhase();
 }
-// Opens the hub's ear on the prepared session (one start at a time).
-function startEar() {
+// Opens the hub's ear on the prepared session (one start at a time). `fresh`:
+// the partner's own switch-on, a new half hour at the hub; every other open
+// (a new session, a lost socket, a return to the page) inherits the half hour
+// the switch was in, so a sleep longer than it ends as idle (spec §10 addendum).
+function startEar({ fresh = false } = {}) {
   if (earStarting) return earStarting;
   earStarting = (async () => {
     if (!wakeMode || ear || !wakeAvailable() || appLocked() || document.visibilityState !== 'visible') return;
@@ -1243,7 +1246,7 @@ function startEar() {
     if (!session || !wakeMode || ear || !remoteStreaming || !audioSocket) return;
     const mine = lifecycle;
     let reply = null;
-    try { reply = await control('window', { ear: true, context: recentConversation.slice(-8) }); } catch { reply = null; }
+    try { reply = await control('window', { ear: true, context: recentConversation.slice(-8), ...(fresh ? { fresh: true } : {}) }); } catch { reply = null; }
     if (!reply || mine !== lifecycle || !session || !Number.isFinite(reply.generation)) return;
     if (!wakeMode) { control('window', { ear: false }).catch(() => null); return; }
     ear = { generation: reply.generation, earId: reply.earId ?? null, paused: false };
@@ -1340,7 +1343,7 @@ async function toggleWake() {
     wakeMode = next;
   } catch { notice('Listening was not changed. Try again.'); }
   finally { wakeBusy = false; }
-  if (wakeMode) void startEar(); else stopEar();
+  if (wakeMode) void startEar({ fresh: next }); else stopEar();
   paintWake();
 }
 async function beginAsk() {

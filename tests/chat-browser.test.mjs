@@ -600,6 +600,8 @@ test('Listen for <name>: the switch streams room audio as an ear, a wake utteran
   assert.deepEqual(saved.at(-1), { chatWakeMode: true });
   for (let i = 0; i < 100 && !controls.some(body => body.type === 'window' && body.ear === true); i++) await page.waitForTimeout(20);
   assert.ok(controls.some(body => body.type === 'window' && body.ear === true), 'the ear is asked for');
+  // The partner's switch-on starts a new half hour at the hub (§10 addendum); a reopen never does.
+  assert.equal(controls.find(body => body.type === 'window' && body.ear === true).fresh, true, 'the switch-on is fresh');
   await page.waitForFunction(ear => window.__frames.filter(frame => frame.gen === ear).length >= 5, EAR, { timeout: 5000 });
   assert.equal((await toggle.textContent()).trim(), 'Listen for Ellie: on');
   assert.equal(await page.locator('#phase').textContent(), 'Listening for Ellie');
@@ -649,6 +651,7 @@ test('Listen for <name>: the switch streams room audio as an ear, a wake utteran
   await emit({ type: 'ear', state: 'off', reason: 'error', earId: 'ear-1', generation: holdGen });
   for (let i = 0; i < 150 && controls.filter(body => body.type === 'window' && body.ear === true).length === opens; i++) await page.waitForTimeout(20);
   assert.equal(controls.filter(body => body.type === 'window' && body.ear === true).length, opens + 1, 'the ear is opened again');
+  assert.equal(controls.filter(body => body.type === 'window' && body.ear === true).at(-1).fresh, undefined, 'a reopen inherits the half hour');
   await page.waitForFunction(() => document.body.dataset.ear === 'on');
   // Off: the ear closes and nothing more is sent.
   await touch('#wakeToggle');

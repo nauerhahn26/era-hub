@@ -343,6 +343,81 @@ test('auto-off (§10): warnings at two minutes and one minute left, off as idle 
   assert.equal(ear('off').filter(e => e.reason === 'idle').length, 1);
 });
 
+// The ear across a sleep (spec 2026-10-28 §10 addendum, 11/1): twelve hours
+// asleep with the ear on wrote no `off (idle)`. The hub's clock is wall time
+// (Date.now), so the first tick after a sleep sees the whole allowance gone.
+const HOURS_12 = 12 * 3600000;
+test('the ear across a sleep: the first tick after twelve hours closes it as idle and saves the switch off', async t => {
+  let now = 7000000, offs = 0;
+  const service = await turnsService(t);
+  const records = [];
+  const h = await hub(t, { service, clock: () => now, limits: { windowTickMs: 10 }, extra: { onWakeIdle: () => { offs++; }, onEar: record => { records.push(record); } } });
+  const s = await h.session();
+  await s.open({ ear: true });
+  now += 18 * 60000; await pause(40);
+  assert.equal(s.events('ear').filter(e => e.state === 'off').length, 0, '18 minutes in: still listening');
+  now += HOURS_12;
+  await until(() => s.events('ear').some(e => e.state === 'off'));
+  assert.deepEqual(s.events('ear').filter(e => e.state === 'off').map(e => e.reason), ['idle']);
+  assert.equal(offs, 1);
+  assert.deepEqual(records.filter(r => r.event === 'off').map(r => r.reason), ['idle']);
+});
+
+// What 11/1 did instead: the session the ear lived in ended while the device
+// slept or woke (the page's event stream or the idle sweep: neither wrote a
+// record), and the page, its switch still on, opened a NEW ear, which started
+// a fresh half hour. The allowance belongs to the switch, not to one ear: an
+// ear opened again without a wake, hold or press inherits it.
+test('the ear across a sleep: an ear opened again in a new session inherits the allowance and closes as idle; its old session\'s end is recorded', async t => {
+  let now = 7000000, offs = 0;
+  const service = await turnsService(t);
+  const records = [];
+  const h = await hub(t, { service, clock: () => now, limits: { windowTickMs: 10 }, extra: { onWakeIdle: () => { offs++; }, onEar: record => { records.push(record); } } });
+  const first = await h.session();
+  const opened = await first.open({ ear: true });
+  now += 18 * 60000;
+  assert.equal((await h.request(`/sessions/${first.id}`, undefined, 'DELETE')).status, 200);
+  assert.deepEqual(records.filter(r => r.event === 'off').map(r => [r.reason, r.earId]), [['ended', opened.earId]], 'a session that ends with its ear on says so');
+  now += HOURS_12;
+  const s = await h.session();
+  const again = await s.open({ ear: true });
+  assert.equal(again.status, 200);
+  await until(() => s.events('ear').some(e => e.state === 'off'));
+  assert.deepEqual(s.events('ear').map(e => [e.state, e.reason]), [['listening', undefined], ['off', 'idle']]);
+  assert.equal(offs, 1, 'the switch is saved off');
+});
+
+test('the ear across a sleep: the switch turned off and on again, a fresh switch-on, and a hold between ears all start a new half hour', async t => {
+  let now = 7000000, offs = 0;
+  const service = await turnsService(t);
+  const h = await hub(t, { service, clock: () => now, limits: { windowTickMs: 10 }, extra: { onWakeIdle: () => { offs++; } } });
+  const quiet = async s => { await pause(80); return s.events('ear').filter(e => e.state === 'off').map(e => e.reason); };
+  // Off by the partner, then on again twelve hours later: a new half hour.
+  const a = await h.session();
+  await a.open({ ear: true });
+  assert.equal((await a.control('window', { ear: false })).status, 200);
+  now += HOURS_12;
+  await a.open({ ear: true });
+  assert.deepEqual(await quiet(a), ['off'], 'only the partner\'s off');
+  // A session lost with the ear on, then the partner's own switch-on (fresh): a new half hour.
+  assert.equal((await h.request(`/sessions/${a.id}`, undefined, 'DELETE')).status, 200);
+  now += HOURS_12;
+  const b = await h.session();
+  assert.equal((await b.open({ ear: true, fresh: true })).status, 200);
+  assert.deepEqual(await quiet(b), []);
+  assert.equal((await b.control('window', { ear: true, fresh: 'yes' })).status, 400);
+  // A session lost with the ear on, then a hold 25 minutes later, then the ear 25 minutes after that: the hold restarted the half hour.
+  assert.equal((await h.request(`/sessions/${b.id}`, undefined, 'DELETE')).status, 200);
+  now += 25 * 60000;
+  const c = await h.session();
+  c.generation = (await (await c.control('ask', { context: [] })).json()).generation;
+  assert.equal((await c.control('cancel')).status, 200);
+  now += 25 * 60000;
+  await c.open({ ear: true });
+  assert.deepEqual(await quiet(c), []);
+  assert.equal(offs, 0);
+});
+
 test('server.js turns the saved switch off when the ear goes idle', async () => {
   const source = await fs.readFile(new URL('../server.js', import.meta.url), 'utf8');
   assert.match(source, /onWakeIdle: \(\) => wakeModeOff\(DATA\)/);
