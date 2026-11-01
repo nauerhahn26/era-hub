@@ -1051,6 +1051,39 @@ function accessoryOrder(items, band) {
   return list.sort((a, b) => d.get(a) - d.get(b) || byId(a, b));
 }
 
+// ---- weatherOrder (spec 2026-11-01 §2-§3 — no original) ---------------------
+//
+// Dad, 11/1, after a cool morning: "it should basically just use the weather,
+// whether you're picking out a t-shirt or whatever you're picking out, all of
+// the clothes, it should sort them based on the weather. So like today was
+// cool, her first options when she went to top was all t-shirts, so that
+// doesn't make sense. Doesn't need to be perfect, but should be coherent to the
+// weather."
+//
+// One garment grid's items (cat_top, cat_pants, cat_shorts, cat_dress,
+// cat_outfit, Dress up), best-for-today first, by the same planning °F the
+// deal is ranked by. Distance is the sum over the garment's FIT rows (rowsOf,
+// the rows fitPts scores) of |temp − centre|, so a garment that leads its grid
+// is the one the deal ranks first inside its kind: one rule, two doors. An
+// item with no FIT row (an accessory on Dress up) sorts after every garment.
+// Ties break by id, so two devices lay the grid out the same way (W1). No temp
+// (weather offline): catalogue order, i.e. by id, as accessoryOrder keeps for
+// a missing band. Like accessoryOrder it NEVER drops an item: the weather only
+// reorders the page.
+function weatherOrder(items, temp) {
+  const list = [...(items || [])];
+  if (!isTemp(temp)) return list.sort(byId);
+  const distance = (item) => {
+    const a = fitAttrs(item);
+    if (!a) return Infinity;
+    let d = 0;
+    for (const c of rowsOf(a)) d += Math.abs(temp - c);
+    return d;
+  };
+  const d = new Map(list.map(i => [i, distance(i)]));
+  return list.sort((a, b) => (d.get(a) === d.get(b) ? 0 : d.get(a) < d.get(b) ? -1 : 1) || byId(a, b));
+}
+
 // The worker's combo shape: a single is {key, one}; a pair is {key, top, bottom}.
 function toWorkerShape(combo) {
   return combo.pieces.length === 1
@@ -1064,7 +1097,7 @@ module.exports = {
   COMBO_RETURN_DAYS, COMBO_RECENCY_PTS,
   BAND_WARMTH, WARMTH_LEVELS, FIT, FIT_PTS_PER_DEG, fitAttrs, fitFields, fitTarget, FIT_WORDS,
   SPECTRUM_K, LEGS_CROSSOVER_F, LONG_SLEEVE_CROSSOVER_F, SLEEVELESS_CROSSOVER_F, SHARE_FLOOR, sharesAt, lookCell,
-  GARMENT_KINDS, ACCESSORY_KINDS, CATEGORIES, OCCASIONS, isAccessory, accessoryOrder,
+  GARMENT_KINDS, ACCESSORY_KINDS, CATEGORIES, OCCASIONS, isAccessory, accessoryOrder, weatherOrder,
   h, hmod, dayKey, yesterdayOf, daysBetween, comboKey,
   attributes, isNeutral, harmonizes, styleScore, pairKey, normalizePairing,
   derivePicks, recordOffer, pruneEvents, lastPage1, lastComboPage1, yesterdayPage1,

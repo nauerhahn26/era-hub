@@ -1277,6 +1277,62 @@ describe("accessoryOrder — warmth closeness to the band (accessories spec §4.
   });
 });
 
+describe("weatherOrder — every garment grid follows the planning °F (spec 2026-11-01 §2-§3)", () => {
+  // distance = the sum over the garment's FIT rows of |temp − centre|: one row
+  // for a top / pants / shorts, two for a dress or a set (its top half and its
+  // legs). Smaller leads; ties break by id. Nothing is ever dropped.
+  const t = (id, over) => g(id, { category: "top", ...over });
+  const midLong = t("item_d_midlong", { coverage: "long", weight: "mid" });      // 52
+  const lightLong = t("item_c_lightlong", { coverage: "long", weight: "light" }); // 67.5
+  const tee = t("item_b_tee", { coverage: "short" });                             // 76
+  const tank = t("item_a_tank", { coverage: "sleeveless" });                      // 90
+  const ids = list => list.map(i => i.id);
+  test("58 °F: a mid long sleeve leads a light long sleeve leads a tee leads a tank", () => {
+    assert.deepEqual(ids(R.weatherOrder([tank, tee, lightLong, midLong], 58)),
+      ["item_d_midlong", "item_c_lightlong", "item_b_tee", "item_a_tank"]);
+  });
+  test("85 °F: the same tops in the reverse order", () => {
+    assert.deepEqual(ids(R.weatherOrder([midLong, lightLong, tee, tank], 85)),
+      ["item_a_tank", "item_b_tee", "item_c_lightlong", "item_d_midlong"]);
+  });
+  test("pants: fleece before light at 50 °F, light before fleece at 72 °F", () => {
+    const fleece = g("item_a_fleece", { category: "pants", weight: "heavy" });   // 50
+    const light = g("item_b_light", { category: "pants", weight: "light" });     // 67.5
+    assert.deepEqual(ids(R.weatherOrder([light, fleece], 50)), ["item_a_fleece", "item_b_light"]);
+    assert.deepEqual(ids(R.weatherOrder([fleece, light], 72)), ["item_b_light", "item_a_fleece"]);
+  });
+  test("dresses: a covered long-sleeve dress leads a sundress at 55 °F and follows it at 88 °F", () => {
+    const covered = g("item_a_covered", { category: "dress", coverage: "long", weight: "mid", legs: "covered" });
+    const sun = g("item_b_sun", { category: "dress", coverage: "sleeveless", legs: "bare" });
+    assert.deepEqual(ids(R.weatherOrder([sun, covered], 55)), ["item_a_covered", "item_b_sun"]);
+    assert.deepEqual(ids(R.weatherOrder([covered, sun], 88)), ["item_b_sun", "item_a_covered"]);
+  });
+  test("a legacy-word garment (no coverage, warmth \"cool\") sorts as a long sleeve", () => {
+    const legacy = t("item_e_legacy", { warmth: "cool" });
+    assert.deepEqual(ids(R.weatherOrder([tank, tee, legacy], 58)), ["item_e_legacy", "item_b_tee", "item_a_tank"]);
+    // the same distance as a light long sleeve by its own words: the tie goes by id
+    assert.deepEqual(ids(R.weatherOrder([legacy, lightLong], 58)), ["item_c_lightlong", "item_e_legacy"]);
+  });
+  test("temp null, undefined or NaN (weather offline): id order", () => {
+    for (const temp of [null, undefined, NaN, Infinity, "58"])
+      assert.deepEqual(ids(R.weatherOrder([midLong, tee, tank, lightLong], temp)),
+        ["item_a_tank", "item_b_tee", "item_c_lightlong", "item_d_midlong"], String(temp));
+  });
+  test("an accessory in the list (no FIT row) sorts after every garment, by id", () => {
+    const hat = g("item_0_hat", { category: "hat" });
+    const shoes = g("item_1_shoes", { category: "shoes", warmth: "cold" });
+    assert.deepEqual(ids(R.weatherOrder([shoes, tank, hat, midLong], 58)),
+      ["item_d_midlong", "item_a_tank", "item_0_hat", "item_1_shoes"]);
+  });
+  test("pure: the input array is not mutated and a missing list is []", () => {
+    const items = [tank, midLong];
+    R.weatherOrder(items, 58);
+    assert.deepEqual(ids(items), ["item_a_tank", "item_d_midlong"]);
+    assert.deepEqual(R.weatherOrder(undefined, 58), []);
+    assert.deepEqual(R.weatherOrder([], null), []);
+  });
+});
+
 describe("the manual fields ride through the pure module (accessories spec §3.2)", () => {
   test("attributes() stays the TASTE whitelist: occasion / hidden / manualAt are not its business", () => {
     // Deliberate (spec §3.2, plan T4): attributes() is what the needs-attributes

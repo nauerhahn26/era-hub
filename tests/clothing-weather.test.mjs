@@ -129,6 +129,10 @@ before(async () => {
   makeJpg(path.join(TMP, "wardrobe-items", "item_warmtop.jpg"), 80, 180, 100);
   makeJpg(path.join(TMP, "wardrobe-items", "item_hotbot.jpg"), 240, 200, 40);
   makeJpg(path.join(TMP, "wardrobe-items", "item_coldbot.jpg"), 40, 140, 140);
+  // ...and a tank (spec 2026-11-01 §4): the grids' far end, so a cool morning's
+  // Tops grid has a sleeveless top to put LAST and a hot one has it near the top.
+  makeJpg(path.join(TMP, "clothing", "tank.jpg"), 250, 120, 30);
+  makeJpg(path.join(TMP, "wardrobe-items", "item_tank.jpg"), 250, 120, 30);
   // attrsAt on every entry: a garment that has already been described is one
   // the needs-attributes pass (T3.2) walks past, so this suite's "the AI is
   // never called" pins hold on the full-build doors too. A fixed day, never
@@ -143,6 +147,8 @@ before(async () => {
     "hotbot.jpg": { id: "item_hotbot", ok: true, name: "Linen shorts", category: "shorts", warmth: "hot", attrsAt: DESCRIBED },
     "coldbot.jpg": { id: "item_coldbot", ok: true, name: "Fleece pants", category: "pants", warmth: "cold",
                      weight: "heavy", attrsAt: DESCRIBED },
+    "tank.jpg": { id: "item_tank", ok: true, name: "Striped tank", category: "top", warmth: "hot",
+                  coverage: "sleeveless", attrsAt: DESCRIBED },
   } }, null, 1));
   // a key IS configured — the point is that the rebuild door still never calls it
   fs.writeFileSync(path.join(TMP, "ai-config.json"),
@@ -166,7 +172,8 @@ before(async () => {
     fs.mkdirSync(path.join(TMP, "wardrobe"), { recursive: true });
     fs.writeFileSync(path.join(TMP, "wardrobe", "history.json"), JSON.stringify({ days: {
       [back(20)]: { band: "warm", page1: [["item_warmtop"]] },
-      [back(10)]: { band: "warm", page1: [["item_top", "item_bot"], ["item_coldtop", "item_coldbot"], ["item_hotbot"]] },
+      [back(10)]: { band: "warm", page1: [["item_top", "item_bot"], ["item_coldtop", "item_coldbot"], ["item_hotbot"],
+                                          ["item_tank", "item_hotbot"]] },
     }, events: {} }, null, 1));
   }
   clothing = require("./clothing.js");
@@ -364,6 +371,42 @@ test("a warm window: every kind at its share — the long sleeve (29 % at 67 °F
   assert.ok(ids.includes("item_hotbot"), "…and so are the shorts, at 34 %");
   const looks = dealtLooks();
   assert.ok(firstLook(looks, "item_bot") < firstLook(looks, "item_coldbot"), "light pants lead fleece at 67 °F");
+  assert.equal(aiCalls, 0);
+});
+
+// ADDED 11/1 (clothing weather sorter, spec 2026-11-01 §2; dad: "today was
+// cool, her first options when she went to top was all t-shirts"). The browse
+// grids behind Full wardrobe used to be in id order whatever the day; they now
+// follow the same planning °F the deal does, nearest FIT centre first. The
+// fixture's tops: the wool sweater (long heavy, 48), two tees (76) and the tank
+// (90); its pants: the leggings (light, 67.5) and the fleece (heavy, 50).
+function gridIds(id) {
+  const r = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
+  const b = r.boards.find(x => x.id === id);
+  assert.ok(b, "the " + id + " grid is on the board");
+  return b.buttons.filter(x => x.type === "clothing").map(x => x.items[0].id);
+}
+test("a cool window: the Tops grid leads with the long sleeve and puts the tank last; fleece leads the pants", async () => {
+  setWindow({ from: 0, to: 8 });
+  const t = await rebuild();
+  assert.match(t.label, /^55°/, "the 0-8 window is the cool 55 °F of the night and morning");
+  const tops = gridIds("cat_top");
+  assert.equal(tops.length, 4, "every top is on the grid — the weather orders, never hides");
+  assert.equal(tops[0], "item_coldtop", "the wool sweater is her first top on a cool morning: " + tops);
+  assert.equal(tops[tops.length - 1], "item_tank", "the tank is last: " + tops);
+  assert.deepEqual(gridIds("cat_pants"), ["item_coldbot", "item_bot"], "fleece before leggings at 55 °F");
+  assert.equal(aiCalls, 0);
+});
+test("a hot window: the Tops grid flips — the long sleeve is last, the tank ahead of it; light pants lead fleece", async () => {
+  setWindow({ from: 14, to: 17 });
+  const t = await rebuild();
+  assert.match(t.label, /^80°/);
+  const tops = gridIds("cat_top");
+  assert.equal(tops.length, 4);
+  assert.equal(tops[tops.length - 1], "item_coldtop", "the wool sweater is last at 80 °F: " + tops);
+  assert.ok(tops.indexOf("item_tank") < tops.indexOf("item_coldtop"), "the tank comes before it: " + tops);
+  assert.deepEqual(tops.slice(0, 2).sort(), ["item_top", "item_warmtop"], "the tees (76) are nearest 80 °F: " + tops);
+  assert.deepEqual(gridIds("cat_pants"), ["item_bot", "item_coldbot"], "light pants before fleece at 80 °F");
   assert.equal(aiCalls, 0);
 });
 

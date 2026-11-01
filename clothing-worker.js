@@ -86,7 +86,7 @@ const CLOTHING = () => path.join(DATA, "clothing");
 // drops a whole album folder into Drive's clothing/ (QA 9/2 — Settings said
 // "15 new", the board said "No content yet") must get a board like anyone else.
 const { listPhotos, photoSet, PHOTOSET_FILE } = require("./clothing-photos");
-const { dayKey, buildCandidates, toWorkerShape, attributes, accessoryOrder, fitFields, fitTarget,
+const { dayKey, buildCandidates, toWorkerShape, attributes, accessoryOrder, weatherOrder, fitFields, fitTarget,
         GARMENT_KINDS, ACCESSORY_KINDS, CATEGORIES, OCCASIONS } = require("./clothing-rank.js");
 const { openLog, mergeHistory } = require("./clothing-log.js");
 // The family's day, in the family's zone — the stamp every "we have already
@@ -1792,8 +1792,20 @@ async function buildCataloged(cat, known) {
   ]});
   // Full wardrobe is reachable from every browse page at the same corner.
   // A fancy garment is in none of them (spec 2026-09-29 D3): it lives on Dress up.
+  // Every garment grid follows the weather (spec 2026-11-01, dad 11/1: "all of
+  // the clothes, it should sort them based on the weather ... today was cool,
+  // her first options when she went to top was all t-shirts"): weatherOrder by
+  // the same planning °F the deal reads, nearest FIT centre first, so page 1 is
+  // the eight that fit the day best. Nothing is hidden. No weather = the grids
+  // exactly as before: catalogue order, which is wardrobe.json's own order (the
+  // photo names), not id order — so weatherOrder is asked only when there is a
+  // planning °F, and an offline board is byte for byte the board it was.
   const door = wardrobeDoor(3, 4);
-  const browse = cat => items.filter(i => i.category === cat && !isFancy(i));
+  const temp = w ? w.t : null;
+  const browse = cat => {
+    const list = items.filter(i => i.category === cat && !isFancy(i));
+    return typeof temp === "number" && Number.isFinite(temp) ? weatherOrder(list, temp) : list;
+  };
   boards.push(...gridPages("cat_top", "Tops", browse("top"), "today", door));
   boards.push(...gridPages("cat_pants", "Pants", browse("pants"), "choose_bottom", door));
   boards.push(...gridPages("cat_shorts", "Shorts", browse("shorts"), "choose_bottom", door));
@@ -1804,12 +1816,15 @@ async function buildCataloged(cat, known) {
   // Back goes to Full wardrobe. The day's band only RE-ORDERS
   // these pages (accessoryOrder): on a cold morning the coats lead, but no
   // accessory is ever weather-hidden (spec §4.1). Full wardrobe stays reachable.
-  // Dress up is every fancy piece — garments and accessories — in id order
-  // (a fancy accessory stays on its own kind's page too; it was never dealt
-  // anyway), `type: "clothing"` tiles exactly like a browse page.
+  // Dress up is every fancy piece — garments and accessories — its garments
+  // ordered by the weather like the browse grids above (spec 2026-11-01 §2),
+  // its accessories (no FIT row) after them in id order; with no weather the
+  // whole page is in id order, as it always was (a fancy accessory
+  // stays on its own kind's page too; it was never dealt anyway),
+  // `type: "clothing"` tiles exactly like a browse page.
   for (const k of kinds)
     boards.push(...gridPages("acc_" + k.id, k.label, k === DRESS_UP
-      ? items.filter(isFancy).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      ? weatherOrder(items.filter(isFancy), temp)
       : accessoryOrder(items.filter(i => i.category === k.id), band), "build", door));
   const drawn = composites.finish();
   console.log("[clothing] composites: " + drawn.drawn + " drawn, " + drawn.reused + " reused");
