@@ -41,6 +41,9 @@ const SHAPES = ['want', 'recall', 'feel', 'open'];
 const MODES = ['ask', 'comment'];
 const DEFAULTS = { inputBytes: 32768, outputBytes: 65536, timeoutMs: 12000, concurrent: 2 };
 function failure(code, status = 502) { return Object.assign(new Error(code), { code, status }); }
+// The reply service said no (stable frame §14): its HTTP status rides along for
+// the hub's one log line; its body (a message, an account) is never read.
+function serviceRefused(response) { return Object.assign(failure('generation-unavailable'), response.ok ? {} : { httpStatus: response.status }); }
 function clean(value, length) {
   if (typeof value !== 'string' || !value.trim() || value.length > length || /[\x00-\x08\x0b-\x1f<>]/.test(value)) return null;
   return value.trim().replace(/\s+/g, ' ');
@@ -338,7 +341,7 @@ function createChoicesAdapter(options = {}) {
       return bounded(input, signal, async (data, controller, before) => {
         const response = await fetcher(url, { method: 'POST', redirect: 'error', signal: controller.signal,
           headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + env.ERA_CHAT_TEXT_TOKEN }, body: requestBody(data, false) });
-        if (!response.ok) throw failure('generation-unavailable');
+        if (!response.ok) throw serviceRefused(response);
         const parsed = await boundedResponse(response, limits.outputBytes, controller);
         if (controller.signal.aborted) throw failure('generation-unavailable');
         return finished(data, parseChoices(parsed), replyUsage(parsed, env.ERA_CHAT_TEXT_MODEL), before);
@@ -350,7 +353,7 @@ function createChoicesAdapter(options = {}) {
       return bounded(input, signal, async (data, controller, before) => {
         const response = await fetcher(url, { method: 'POST', redirect: 'error', signal: controller.signal,
           headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', Authorization: 'Bearer ' + env.ERA_CHAT_TEXT_TOKEN }, body: requestBody(data, true) });
-        if (!response.ok || !response.body) throw failure('generation-unavailable');
+        if (!response.ok || !response.body) throw serviceRefused(response);
         let firstChoiceMs = null, usage = null, fault = null, completed = false;
         const parser = createChoiceStream({ onChoice: value => {
           if (firstChoiceMs === null) firstChoiceMs = Math.round((clock() - before) * 100) / 100;
@@ -387,7 +390,7 @@ function createChoicesAdapter(options = {}) {
           text: { format: { type: 'json_schema', name: 'yes_no', strict: true, schema: yesNoSchema(feelings) } } });
         const response = await fetcher(url, { method: 'POST', redirect: 'error', signal: controller.signal,
           headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + env.ERA_CHAT_TEXT_TOKEN }, body });
-        if (!response.ok) throw failure('generation-unavailable');
+        if (!response.ok) throw serviceRefused(response);
         const parsed = await boundedResponse(response, limits.outputBytes, controller);
         if (controller.signal.aborted) throw failure('generation-unavailable');
         const usage = replyUsage(parsed, env.ERA_CHAT_TEXT_MODEL);

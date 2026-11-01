@@ -247,7 +247,7 @@ function waitForAudioDrain(pending, timeoutMs = 4000) {
 async function json(url, options = {}) {
   const r = await fetch(url, { ...options, headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers } });
   const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(body.message || body.error || 'The speech service is unavailable.');
+  if (!r.ok) throw Object.assign(new Error(body.message || body.error || 'The speech service is unavailable.'), typeof body.error === 'string' ? { code: body.error } : {});
   return body;
 }
 const notice = text => { $('notice').textContent = text || ''; };
@@ -311,7 +311,18 @@ const controller = createChatController({
       shape: result.shape, recallRejected: result.recallRejected, world: result.world };
     return result;
   },
-  onChoicesError: () => { metrics.end(questionMetric, 'failed', 'choices'); return shutdown('cancel', true); },
+  // A failed reply fails the turn only (spec 2026-10-28 §14): the session, the
+  // audio socket, the microphone, the ear and a press window stay; the hub's
+  // code goes in the record. The ear was never paused for a wake question, and
+  // the hub resumes it after a hold's final as always.
+  onChoicesError: error => {
+    const code = typeof error?.code === 'string' && /^[a-z][a-z0-9-]{0,39}$/.test(error.code) ? error.code : null;
+    if (code) turnLog.content(questionMetric, { choicesError: code });
+    const state = controller.state;
+    // The strip asks again on the next look (§15).
+    failedAsk = state.question ? { turn: state.turn, question: state.question, wake: wakeMetric !== null && wakeMetric === questionMetric } : null;
+    metrics.end(questionMetric, 'failed', 'choices');
+  },
   stopSpeech: () => { reader?.cancel(); currentSpeech++; metrics.end(speechMetric, 'cancelled', 'interrupted'); speechMetric = null; voice.stop(); },
   prefetch: choices => {
     voice.prefetch(choices, { role: 'her' });
@@ -388,7 +399,7 @@ reader = createOptionsReader({ delayMs: () => promptMs, name: () => herName,
 function armReading(state) {
   if (state.phase !== 'Your turn' || !state.choices.length || page || modeView || holdActive() || windowOpen() || $('partnerDialog').open) return;
   // Each label is read as it is on screen when the reading reaches it (§11: the answers in full).
-  void reader.armed({ id: state.choices.map(choice => choice.id).join(','), items: state.choices.map(choice => ({ id: choice.id, get label() { return shownReply(choice).label; } })) });
+  void reader.armed({ id: `${state.choices.map(choice => choice.id).join(',')}#${armEpoch}`, items: state.choices.map(choice => ({ id: choice.id, get label() { return shownReply(choice).label; } })) });
 }
 // A selection on a tile stops the reading at once; a glance (dwell progress)
 // never does (spec 2026-10-28 §6, amended 10/31 night: "it should keep giving
@@ -610,9 +621,38 @@ function stripTile(state) {
   if (capturing(state)) return tile(state.partial || '', 'question live', null, area, '', { noPicture: true });
   if (state.question) {
     const question = state.question;
-    return tile(question, 'question', () => { echoing = true; void controller.sayFixed(question, { echo: true }); }, area, '', { noPicture: true });
+    return tile(question, 'question', () => lookAtQuestion(question), area, '', { noPicture: true });
   }
   return tile('Ask me something', 'question empty', null, area, '', { noPicture: true });
+}
+// ---- the question re-renders its replies (spec 2026-10-28 §15) ----
+// A look at the strip (a dwell) or the partner's touch repeats the question
+// and, when a page or a mode she opened stands in the middle, brings this
+// question's replies back (the controller still holds them: nothing is asked
+// again, the made sets stay made). A question whose replies never arrived
+// (§14) is asked again, once per look. The reading (§6) re-arms when the
+// replies come back: `armEpoch` makes the batch new to the reader.
+let failedAsk = null, armEpoch = 0, wakeMetric = null;
+function lookAtQuestion(question) {
+  const state = controller.state;
+  if (state.question === question && state.choices.length && !state.stale && (page || modeView)) {
+    reader.cancel(); page = null; pageOffset = 0; modeView = null; armEpoch++;
+    gridKey = ''; renderGrid(state);
+  } else if (state.question === question && !state.choices.length && !waitingForReplies(state) && failedAsk?.turn === state.turn && failedAsk.question === question) askAgain(failedAsk);
+  // After the replies are back: speaking first would be stopped by a new preparation.
+  echoing = true; void controller.sayFixed(question, { echo: true });
+}
+// The same question by the plain request path (typed questions use it too); a test-mode record of its own.
+function askAgain(failed) {
+  failedAsk = null;
+  metrics.end(questionMetric, 'cancelled', 'superseded');
+  questionMetric = {};
+  turnLog.begin(questionMetric, 'press', { mode: failed.wake ? 'wake' : 'none', session });
+  turnLog.content(questionMetric, { transcript: failed.question, retried: true, ...(failed.wake ? { wake: true } : {}) });
+  // The question is in the conversation once.
+  recentConversation = recentConversation.filter(line => line !== `Partner: ${failed.question}`.slice(0, 500));
+  dropStaging(); dropMade(); page = null; pageOffset = 0; modeView = null; armEpoch++;
+  controller.prepare(failed.question);
 }
 // The live partial changes the strip's words in place; nothing else redraws.
 function paintStrip(state) {
@@ -906,7 +946,7 @@ function stagingEvent(data) {
       pictureWarm: data.pictureWarm, shape: data.shape, recallRejected: data.recallRejected, world: data.world, timings: data.timings };
     record.done?.();
   } else if (data.type === 'choices-error') {
-    record.error = new Error('Replies are unavailable. Your phrases still work.');
+    record.error = Object.assign(new Error('Replies are unavailable. Your phrases still work.'), typeof data.error === 'string' ? { code: data.error } : {});
     record.done?.(record.error);
   }
 }
@@ -1226,8 +1266,11 @@ function paintWake() {
   document.body.dataset.ear = ear ? 'on' : 'off';
   paintPhase();
 }
-// Opens the hub's ear on the prepared session (one start at a time).
-function startEar() {
+// Opens the hub's ear on the prepared session (one start at a time). `fresh`:
+// the partner's own switch-on, a new half hour at the hub; every other open
+// (a new session, a lost socket, a return to the page) inherits the half hour
+// the switch was in, so a sleep longer than it ends as idle (spec §10 addendum).
+function startEar({ fresh = false } = {}) {
   if (earStarting) return earStarting;
   earStarting = (async () => {
     if (!wakeMode || ear || !wakeAvailable() || appLocked() || document.visibilityState !== 'visible') return;
@@ -1235,7 +1278,7 @@ function startEar() {
     if (!session || !wakeMode || ear || !remoteStreaming || !audioSocket) return;
     const mine = lifecycle;
     let reply = null;
-    try { reply = await control('window', { ear: true, context: recentConversation.slice(-8) }); } catch { reply = null; }
+    try { reply = await control('window', { ear: true, context: recentConversation.slice(-8), ...(fresh ? { fresh: true } : {}) }); } catch { reply = null; }
     if (!reply || mine !== lifecycle || !session || !Number.isFinite(reply.generation)) return;
     if (!wakeMode) { control('window', { ear: false }).catch(() => null); return; }
     ear = { generation: reply.generation, earId: reply.earId ?? null, paused: false };
@@ -1312,7 +1355,7 @@ function earSealed(data) {
   reader?.cancel(); dropStaging();
   metrics.end(questionMetric, 'cancelled', 'superseded');
   // Test mode only (kind press, mode wake): ear turns never enter the production rows.
-  questionMetric = {};
+  questionMetric = {}; wakeMetric = questionMetric;
   turnLog.begin(questionMetric, 'press', { mode: 'wake', session });
   turnLog.content(questionMetric, { transcript: question, wake: true });
   turnLog.mark(questionMetric, 'utteranceSealed', { text: String(data.text || '').slice(0, 2000) });
@@ -1332,7 +1375,7 @@ async function toggleWake() {
     wakeMode = next;
   } catch { notice('Listening was not changed. Try again.'); }
   finally { wakeBusy = false; }
-  if (wakeMode) void startEar(); else stopEar();
+  if (wakeMode) void startEar({ fresh: next }); else stopEar();
   paintWake();
 }
 async function beginAsk() {

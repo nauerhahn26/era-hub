@@ -191,6 +191,9 @@ export function createTurnLog(options = {}) {
       if (patch.back === true) turn.content.back = true; // Back was used (maintainer 10/29)
       if (patch.wake === true) turn.content.wake = true; // a wake-word question (§8)
       if (patch.answered === true) turn.content.answered = true; // Yes/No in full were on screen when she chose (§11)
+      // A failed reply's code from the hub (§14), and a question asked again from the strip (§15).
+      if (typeof patch.choicesError === 'string' && /^[a-z][a-z0-9-]{0,39}$/.test(patch.choicesError)) turn.content.choicesError = patch.choicesError;
+      if (patch.retried === true) turn.content.retried = true;
       notify();
     },
     worker(handle, timings) {

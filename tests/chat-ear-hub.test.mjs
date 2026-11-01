@@ -343,6 +343,81 @@ test('auto-off (§10): warnings at two minutes and one minute left, off as idle 
   assert.equal(ear('off').filter(e => e.reason === 'idle').length, 1);
 });
 
+// The ear across a sleep (spec 2026-10-28 §10 addendum, 11/1): twelve hours
+// asleep with the ear on wrote no `off (idle)`. The hub's clock is wall time
+// (Date.now), so the first tick after a sleep sees the whole allowance gone.
+const HOURS_12 = 12 * 3600000;
+test('the ear across a sleep: the first tick after twelve hours closes it as idle and saves the switch off', async t => {
+  let now = 7000000, offs = 0;
+  const service = await turnsService(t);
+  const records = [];
+  const h = await hub(t, { service, clock: () => now, limits: { windowTickMs: 10 }, extra: { onWakeIdle: () => { offs++; }, onEar: record => { records.push(record); } } });
+  const s = await h.session();
+  await s.open({ ear: true });
+  now += 18 * 60000; await pause(40);
+  assert.equal(s.events('ear').filter(e => e.state === 'off').length, 0, '18 minutes in: still listening');
+  now += HOURS_12;
+  await until(() => s.events('ear').some(e => e.state === 'off'));
+  assert.deepEqual(s.events('ear').filter(e => e.state === 'off').map(e => e.reason), ['idle']);
+  assert.equal(offs, 1);
+  assert.deepEqual(records.filter(r => r.event === 'off').map(r => r.reason), ['idle']);
+});
+
+// What 11/1 did instead: the session the ear lived in ended while the device
+// slept or woke (the page's event stream or the idle sweep: neither wrote a
+// record), and the page, its switch still on, opened a NEW ear, which started
+// a fresh half hour. The allowance belongs to the switch, not to one ear: an
+// ear opened again without a wake, hold or press inherits it.
+test('the ear across a sleep: an ear opened again in a new session inherits the allowance and closes as idle; its old session\'s end is recorded', async t => {
+  let now = 7000000, offs = 0;
+  const service = await turnsService(t);
+  const records = [];
+  const h = await hub(t, { service, clock: () => now, limits: { windowTickMs: 10 }, extra: { onWakeIdle: () => { offs++; }, onEar: record => { records.push(record); } } });
+  const first = await h.session();
+  const opened = await first.open({ ear: true });
+  now += 18 * 60000;
+  assert.equal((await h.request(`/sessions/${first.id}`, undefined, 'DELETE')).status, 200);
+  assert.deepEqual(records.filter(r => r.event === 'off').map(r => [r.reason, r.earId]), [['ended', opened.earId]], 'a session that ends with its ear on says so');
+  now += HOURS_12;
+  const s = await h.session();
+  const again = await s.open({ ear: true });
+  assert.equal(again.status, 200);
+  await until(() => s.events('ear').some(e => e.state === 'off'));
+  assert.deepEqual(s.events('ear').map(e => [e.state, e.reason]), [['listening', undefined], ['off', 'idle']]);
+  assert.equal(offs, 1, 'the switch is saved off');
+});
+
+test('the ear across a sleep: the switch turned off and on again, a fresh switch-on, and a hold between ears all start a new half hour', async t => {
+  let now = 7000000, offs = 0;
+  const service = await turnsService(t);
+  const h = await hub(t, { service, clock: () => now, limits: { windowTickMs: 10 }, extra: { onWakeIdle: () => { offs++; } } });
+  const quiet = async s => { await pause(80); return s.events('ear').filter(e => e.state === 'off').map(e => e.reason); };
+  // Off by the partner, then on again twelve hours later: a new half hour.
+  const a = await h.session();
+  await a.open({ ear: true });
+  assert.equal((await a.control('window', { ear: false })).status, 200);
+  now += HOURS_12;
+  await a.open({ ear: true });
+  assert.deepEqual(await quiet(a), ['off'], 'only the partner\'s off');
+  // A session lost with the ear on, then the partner's own switch-on (fresh): a new half hour.
+  assert.equal((await h.request(`/sessions/${a.id}`, undefined, 'DELETE')).status, 200);
+  now += HOURS_12;
+  const b = await h.session();
+  assert.equal((await b.open({ ear: true, fresh: true })).status, 200);
+  assert.deepEqual(await quiet(b), []);
+  assert.equal((await b.control('window', { ear: true, fresh: 'yes' })).status, 400);
+  // A session lost with the ear on, then a hold 25 minutes later, then the ear 25 minutes after that: the hold restarted the half hour.
+  assert.equal((await h.request(`/sessions/${b.id}`, undefined, 'DELETE')).status, 200);
+  now += 25 * 60000;
+  const c = await h.session();
+  c.generation = (await (await c.control('ask', { context: [] })).json()).generation;
+  assert.equal((await c.control('cancel')).status, 200);
+  now += 25 * 60000;
+  await c.open({ ear: true });
+  assert.deepEqual(await quiet(c), []);
+  assert.equal(offs, 0);
+});
+
 test('server.js turns the saved switch off when the ear goes idle', async () => {
   const source = await fs.readFile(new URL('../server.js', import.meta.url), 'utf8');
   assert.match(source, /onWakeIdle: \(\) => wakeModeOff\(DATA\)/);
@@ -483,12 +558,15 @@ test('ear records: each turn and seal with what the wake rule found, pause and r
   assert.equal((await s.control('finish', { seq: s.sent() })).status, 200);
   await until(() => ear('resume').length === 1);
   assert.deepEqual([ear('pause')[0].reason, ear('resume')[0].reason], ['hold', 'final']);
+  // §14: the ear's opening and its resume are written too, so the log shows when it listened at all.
+  assert.deepEqual(ear('on').map(r => [r.tier, r.resumed, r.earId]), [['main', false, opened.earId], ['main', true, opened.earId]]);
+  assert.ok(records.indexOf(ear('on')[0]) < records.indexOf(ear('turn')[0]), 'on comes first');
   assert.equal((await s.control('window', { ear: false })).status, 200);
   assert.deepEqual(ear('off').map(r => r.reason), ['off']);
   const before = records.length;
   assert.equal((await s.control('clip', { on: true, at: 2000, text: 'No.' })).status, 200);
   assert.equal(records.length, before, 'no ear, no clip line');
-  assert.ok(records.every(r => Object.keys(r).every(key => ['event', 'at', 'earId', 'tier', 'text', 'wake', 'question', 'reason', 'replayedMs', 'on', 'source', 'pageAt', 'heard', 'clip', 'kept'].includes(key))));
+  assert.ok(records.every(r => Object.keys(r).every(key => ['event', 'at', 'earId', 'tier', 'text', 'wake', 'question', 'reason', 'replayedMs', 'on', 'source', 'pageAt', 'heard', 'clip', 'kept', 'resumed', 'code'].includes(key))));
 });
 
 test('ear records: a bare name is found as a name; a lost socket is recorded and the ear is off; a broken writer never touches the ear', async t => {
@@ -504,6 +582,34 @@ test('ear records: a bare name is found as a name; a lost socket is recorded and
   await until(() => ear('off').length === 1);
   assert.deepEqual([ear('socket').length, ear('off')[0].reason], [1, 'socket']);
   assert.ok(records.indexOf(ear('socket')[0]) < records.indexOf(ear('off')[0]));
+});
+
+// A failed reply never ends the session (spec 2026-10-28 §14): the reply
+// service refusing every request (11/1: no credit left) fails the turn only.
+test('a failed reply job: choices-error with the hub\'s code, a fault ear record, one log line with the service\'s status and never its text; the ear listens on', async t => {
+  const service = await turnsService(t, { 2: [ENDED('Ellie, what should we cook tonight')], 5: [ENDED('Ellie, what about some soup', 1)] });
+  const records = [], lines = [], ear = earOf(records);
+  const h = await hub(t, { service, env: REPLY_ENV, extra: { onEar: record => { records.push(record); }, log: line => lines.push(line) },
+    fetch: (url, init) => {
+      if (init?.method === 'HEAD') return Promise.resolve(new Response(null));
+      return Promise.resolve(new Response(JSON.stringify({ error: { message: 'Your credit balance is too low (secret account 1234)' } }), { status: 402, headers: { 'Content-Type': 'application/json' } }));
+    } });
+  const s = await h.session();
+  const opened = await s.open({ ear: true });
+  await s.frames(3);
+  await until(() => s.events('choices-error').length === 1);
+  const failed = s.events('choices-error')[0];
+  assert.deepEqual([failed.error, failed.windowId, failed.generation], ['generation-unavailable', s.events('utterance-sealed')[0].windowId, opened.generation]);
+  assert.deepEqual(ear('fault').map(r => [r.code, r.earId]), [['generation-unavailable', opened.earId]]);
+  assert.deepEqual(lines, ['[chat] replies failed: generation-unavailable 402']);
+  assert.ok(!JSON.stringify([records, lines, s.seen]).includes('credit'), 'never the service\'s message text');
+  // The ear was never touched: no off, and the next wake question is sealed and asked.
+  assert.equal(s.events('ear').filter(e => e.state === 'off').length, 0);
+  await s.frames(3);
+  await until(() => s.events('choices-error').length === 2);
+  assert.deepEqual(s.events('utterance-sealed').map(e => e.text), ['what should we cook tonight', 'what about some soup']);
+  assert.equal(ear('fault').length, 2); assert.equal(lines.length, 2);
+  assert.equal(ear('on').length, 1, 'opened once: a failure never closes or reopens the ear');
 });
 
 test('server.js sends the ear\'s lines to the chat-turns writer', async () => {

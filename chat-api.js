@@ -574,6 +574,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   // writer (server.js: chat-turns, kept only while test mode is on). Words
   // capped at 300; a writer that fails never touches the ear.
   const earSink = typeof options.onEar === 'function' ? options.onEar : null;
+  // The last wake, hold or press while the switch was on (see earActive), or null.
+  let wakeCarry = null;
   function earLog(session, event, fields = {}, ear = session.ear) {
     if (!earSink) return;
     const record = { event, at: clock(), ...(ear ? { earId: ear.id } : {}) };
@@ -612,6 +614,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     session.closed = true; sessions.delete(session.id);
     clearTimeout(session.killTimer);
     if (session.window) { clearInterval(session.window.timer); clearTimeout(session.window.drainTimer); session.window = null; }
+    // A session that ends with its ear on (its event stream closed, the idle sweep) says so (§10 addendum).
+    if (session.ear) earLog(session, 'off', { reason: 'ended' });
     session.ear = null; session.ring = [];
     if (session.earStream) { session.earStream.close(); session.earStream = null; }
     if (session.events) session.events.end();
@@ -951,7 +955,7 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
         const response = await fetcher(adapterUrl, { method: 'POST', redirect: 'error', signal,
           headers: { 'Content-Type': 'application/json', ...(env.ERA_CHAT_CHOICES_TOKEN ? { Authorization: 'Bearer ' + env.ERA_CHAT_CHOICES_TOKEN } : {}) },
           body: JSON.stringify(input) });
-        if (!response.ok || !response.body) throw fault(502, 'choices-unavailable');
+        if (!response.ok || !response.body) throw Object.assign(fault(502, 'choices-unavailable'), response.ok ? {} : { httpStatus: response.status });
         let size = 0, chunks = [];
         for await (const chunk of response.body) {
           size += chunk.length;
@@ -1037,9 +1041,17 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     // The hub knows the picture before the page does: warm it now, behind the event.
     if (job.pictures && pick.symbolId) try { job.pictures.stage(pick.symbolId); } catch { /* decorative */ }
   }
+  // A failed reply job (stable frame §14): the hub's code and the reply
+  // service's HTTP status when it answered with one; never its message text.
+  const logLine = typeof options.log === 'function' ? options.log : line => console.log(line);
+  function repliesFailed(session, error) {
+    const code = /^[a-z][a-z0-9-]{0,39}$/.test(String(error?.code || '')) ? error.code : 'choices-unavailable';
+    if (session.ear) earLog(session, 'fault', { code });
+    try { logLine(`[chat] replies failed: ${code}${Number.isSafeInteger(error?.httpStatus) ? ` ${error.httpStatus}` : ''}`); } catch { /* the log never touches Chat */ }
+  }
   function sealChoices(session, job) {
     if (!liveJob(session, job)) return;
-    if (job.error) { job.sealed = true; emit(session, { type: 'choices-error', error: job.error.code || 'choices-unavailable', generation: job.generation, ...windowOf(job) }); return; }
+    if (job.error) { job.sealed = true; repliesFailed(session, job.error); emit(session, { type: 'choices-error', error: job.error.code || 'choices-unavailable', generation: job.generation, ...windowOf(job) }); return; }
     // A batch that arrived whole (a shortcut, the adapter) stages each choice now.
     if (!job.stagedCount) for (const choice of job.result.choices) stageChoice(session, job, choice);
     job.sealed = true;
@@ -1208,7 +1220,12 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
   }
   // Auto-off (§10): warnings at two minutes and one minute left, then off as
   // idle; the hub saves the switch off (onWakeIdle) so a reload does not reopen it.
-  function earActive(ear) { ear.activeAt = clock(); ear.warned = []; }
+  // The allowance belongs to the switch, not to one ear (§10 addendum, 11/1):
+  // an ear opened again without a wake, hold or press (a new session after a
+  // sleep, a lost socket, a stream error) inherits the last activity, so the
+  // first tick after a sleep longer than the allowance closes it as idle. The
+  // partner's off (or the idle off itself) and a fresh switch-on start anew.
+  function earActive(ear) { ear.activeAt = clock(); ear.warned = []; wakeCarry = ear.activeAt; }
   function earTick(session, ear) {
     // Two tiers (§10): engaged, the main stream listens until chatEngageMs
     // passes without a wake (and nothing is mid-utterance, 15 s at most past
@@ -1236,14 +1253,17 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
       if (remaining > mark - 60000) emit(session, { type: 'ear', state: 'warning', remainingMs: mark, earId: ear.id, generation: session.generation });
     }
   }
-  function openEar(session, context) {
+  function openEar(session, context, { fresh = false } = {}) {
     abortChoices(session); endStreamTurn(session);
     session.generation++; session.context = context;
     const ear = { id: randomBytes(6).toString('hex'), paused: false, pendingAt: null, activeAt: 0, warned: [], tier: earProfile ? 'ear' : 'main', wakeAt: 0, utteranceAt: null };
+    const inherited = fresh ? null : wakeCarry;
     earActive(ear);
+    if (inherited !== null) ear.activeAt = wakeCarry = inherited;
     session.ear = ear; session.ring = [];
     startEarTurn(session, ear);
     emit(session, { type: 'ear', state: 'listening', tier: ear.tier, earId: ear.id, generation: session.generation });
+    earLog(session, 'on', { tier: ear.tier, resumed: false });
     return ear;
   }
   function pauseEar(session, reason) {
@@ -1261,11 +1281,13 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     startEarTurn(session, ear);
     emit(session, { type: 'ear', state: 'listening', tier: ear.tier, earId: ear.id, generation: session.generation, resumed: true });
     earLog(session, 'resume', { reason });
+    earLog(session, 'on', { tier: ear.tier, resumed: true });
   }
   function closeEar(session, reason) {
     const ear = session.ear;
     if (!ear) return;
     session.ear = null; session.ring = [];
+    if (['idle', 'off'].includes(reason)) wakeCarry = null;
     const win = session.window && session.window.ear ? session.window : null;
     if (win) {
       clearInterval(win.timer); session.window = null;
@@ -1468,7 +1490,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
         (body.type === 'clip' && (typeof body.on !== 'boolean' || !Number.isFinite(body.at) || body.at < 0 || ![undefined, 'page', 'other'].includes(body.source) ||
           (body.on && (typeof body.text !== 'string' || body.text.length > 600)))) ||
         (body.type === 'arm' && typeof body.enabled !== 'boolean') ||
-        (body.type === 'window' && body.ear !== undefined && typeof body.ear !== 'boolean')) throw fault(400, 'invalid-control');
+        (body.type === 'window' && body.ear !== undefined && typeof body.ear !== 'boolean') ||
+        (body.type === 'window' && body.fresh !== undefined && typeof body.fresh !== 'boolean')) throw fault(400, 'invalid-control');
       // The page put the plain Yes and No back (§11): the answers in full still coming go; nothing else changes.
       if (body.type === 'drop') { session.choiceJob?.answer?.abort(); return json(res, 200, { ok: true, generation: session.generation }); }
       // Her clip (§13): its words (this page's or another Chat page's) start or end, on the hub's clock;
@@ -1486,12 +1509,16 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
         if (session.window && !session.window.ear) throw fault(409, 'window-open');
         const context = cleanContext(body.context);
         // Already on: the same ear; a context brings the conversation so far up to date.
-        if (session.ear) { if (context) session.context = context; return json(res, 200, { ok: true, generation: session.generation, earId: session.ear.id }); }
-        const ear = openEar(session, context || []);
+        // `fresh`: the partner turned the switch on (a new half hour, §10 addendum).
+        if (session.ear) { if (context) session.context = context; if (body.fresh === true) earActive(session.ear);
+          return json(res, 200, { ok: true, generation: session.generation, earId: session.ear.id }); }
+        const ear = openEar(session, context || [], { fresh: body.fresh === true });
         warmReply();
         await write(session, { type: 'cancel' });
         return json(res, 200, { ok: true, generation: session.generation, earId: ear.id });
       }
+      // A hold or a press is the partner here: the switch's half hour restarts even with no ear open (§10).
+      if (['ask', 'window'].includes(body.type) && wakeCarry !== null) wakeCarry = clock();
       session.controlling = true;
       try { return await control(session, body, res); }
       finally { session.controlling = false; resumeEar(session, 'control'); }

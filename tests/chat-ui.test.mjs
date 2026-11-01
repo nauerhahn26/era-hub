@@ -156,14 +156,24 @@ test('fractional device sample rates produce the same PCM across input block bou
   assert.equal(Buffer.concat(full).readInt16LE(0), 8192);
 });
 
-test('current choices failure stops listening truthfully and requests session cleanup while fixed phrases work', async () => {
-  let cleanup = 0, spoken = '';
-  const c = createChatController({ requestChoices: async () => { throw new Error('choices-unavailable'); },
-    onChoicesError: () => { cleanup++; }, speak: async item => { spoken = item.say; } });
+// A failed reply never ends the session (stable frame spec §14): the turn
+// fails, the question stays on the strip, Chat stays ready, the page is told
+// (with the error, whose code goes in the turn record) and nothing is stopped.
+test('a failed reply fails the turn only: the question stays, Chat stays ready, fixed phrases work, the page gets the error', async () => {
+  let failures = [], spoken = '', stops = 0;
+  const c = createChatController({ requestChoices: async () => { throw Object.assign(new Error('Replies are unavailable.'), { code: 'generation-unavailable' }); },
+    onChoicesError: error => { failures.push(error.code); }, speak: async item => { spoken = item.say; }, stopSpeech: () => { stops++; } });
   c.ready(); await c.prepare('a question');
-  assert.equal(c.state.phase, 'Off'); assert.equal(c.state.engineReady, false); assert.equal(c.state.wakeEnabled, false);
-  assert.equal(cleanup, 1); assert.ok(c.state.error.includes('phrases still work'));
-  await c.sayFixed('Yes.'); assert.equal(spoken, 'Yes.'); assert.equal(c.state.phase, 'Off');
+  const stopsAfter = stops;
+  assert.equal(c.state.phase, 'Ready to ask'); assert.equal(c.state.engineReady, true);
+  assert.equal(c.state.question, 'a question', 'the question stays on the strip');
+  assert.deepEqual(c.state.choices, []);
+  assert.equal(c.state.error, 'Replies are unavailable. Your phrases still work.');
+  assert.deepEqual(failures, ['generation-unavailable']);
+  await c.sayFixed('Yes.'); assert.equal(spoken, 'Yes.'); assert.equal(c.state.phase, 'Ready to ask');
+  assert.equal(stopsAfter, 1, 'only the prepare itself stopped speech; the failure stops nothing');
+  // Clear still takes the failed question away; the next question prepares as usual.
+  assert.equal(c.clear(), true); assert.equal(c.state.question, '');
 });
 
 test('late failed choices from an older turn cannot shut down the newer turn', async () => {

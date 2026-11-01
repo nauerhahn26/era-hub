@@ -35,6 +35,7 @@ function place(shown, next) {
   return Object.freeze(next.map((c, i) => Object.freeze({ ...c, cell: at[i] ?? open.shift() })).sort((a, b) => a.cell - b.cell));
 }
 
+export const REPLIES_UNAVAILABLE = 'Replies are unavailable. Your phrases still work.';
 export function createChatController(deps = {}) {
   let turn = 0, batch = 0, preparing = false, abort = null, speechAbort = null, utterance = 0;
   // At most one staged replacement waits for a neutral moment; a newer one supersedes it unseen.
@@ -110,10 +111,12 @@ export function createChatController(deps = {}) {
         patch({ choices: next, stale: false, staleTurn: null, phase: state.phase === 'Speaking' ? 'Speaking' : 'Your turn' });
       } catch (e) {
         if (mine !== turn) return;
-        // Final recognition has already paused capture. A failed reply request
-        // cannot truthfully restore listening without an acknowledged rearm.
-        api.fail('Replies are unavailable. Chat is off. Your phrases still work.');
-        await deps.onChoicesError?.();
+        // A failed reply fails the turn only (stable frame spec §14): the
+        // question stays on the strip, Chat stays ready (the session, the ear
+        // and a press window are the page's and untouched), the phrases work.
+        preparing = false;
+        patch({ phase: state.phase === 'Speaking' ? 'Speaking' : state.choices.length && !state.stale ? 'Your turn' : idlePhase(), error: REPLIES_UNAVAILABLE, hint: '' });
+        await deps.onChoicesError?.(e);
       }
     },
     // A fresh batch for the same question (Something else, spec 2026-10-28 §3):
