@@ -751,12 +751,13 @@ test('the window is not a hold: its tiles stay dwell targets and her pick speaks
   await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 10000 });
   assert.equal(await f.page.evaluate(() => document.body.dataset.replacing), 'true', 'pasta still waits after the close: her gaze is on Chicken');
   const plays = await f.page.evaluate(() => window.__plays);
-  await f.page.waitForTimeout(1200);
-  assert.equal(await f.page.evaluate(() => window.__plays), plays, 'her dwell on Chicken keeps the reading off');
+  // A glance never keeps the reading off (spec 2026-10-28 §6, amended 10/31 night: only a selection stops it).
+  await f.page.waitForFunction(n => window.__plays > n, plays, { timeout: 5000 });
   await f.restOffTiles();
   await f.page.waitForFunction(() => document.body.dataset.replacing === 'false', null, { timeout: 5000 });
   assert.deepEqual(await f.shown(), byCell('Chicken', 'Fish', 'Pasta'));
-  await f.page.waitForFunction(n => window.__plays > n, plays, { timeout: 5000 });
+  const swapped = await f.page.evaluate(() => window.__plays);
+  await f.page.waitForFunction(n => window.__plays > n, swapped, { timeout: 5000 });
   await f.page.waitForFunction(() => document.querySelector('.tile.response.on'), null, { timeout: 5000 });
   const lit = [];
   for (let i = 0; i < 30 && !lit.includes('Pasta'); i++) { lit.push(...await litLabels(f.page)); await f.page.waitForTimeout(100); }

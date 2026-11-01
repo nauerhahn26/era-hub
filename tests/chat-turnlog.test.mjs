@@ -385,14 +385,16 @@ test('the stable frame\'s uses are in the record: the mode she swapped to, the p
 
 test('a turn whose options were read aloud is marked prompted (spec 2026-10-28 §6); nothing else marks it', async () => {
   const s = setup(), h = s.wrapped.begin('typed');
-  s.log.content(h, { prompted: true }); s.log.content(h, { selected: { id: '1:0', label: 'Fish', say: 'Fish' } });
+  s.log.content(h, { prompted: true, readings: 1 }); s.log.content(h, { prompted: true, readings: 2 }); s.log.content(h, { selected: { id: '1:0', label: 'Fish', say: 'Fish' } });
   s.wrapped.end(h, 'completed'); await flush();
   const record = JSON.parse(s.requests.find(r => r.url === '/chat/api/turns').init.body);
   assert.equal(record.content.prompted, true); assert.equal(record.content.selected.label, 'Fish');
+  assert.equal(record.content.readings, 2, 'how many readings started (§6: up to three)');
   const t = setup(), h2 = t.wrapped.begin('typed');
-  t.log.content(h2, { prompted: 'yes' }); t.log.content(h2, { prompted: false });
+  t.log.content(h2, { prompted: 'yes', readings: 0 }); t.log.content(h2, { prompted: false, readings: 4 }); t.log.content(h2, { readings: 1.5 });
   t.wrapped.end(h2, 'completed'); await flush();
-  assert.equal('prompted' in JSON.parse(t.requests.find(r => r.url === '/chat/api/turns').init.body).content, false);
+  const content = JSON.parse(t.requests.find(r => r.url === '/chat/api/turns').init.body).content;
+  assert.equal('prompted' in content, false); assert.equal('readings' in content, false);
 });
 
 test('a turn where Back was used is marked back (maintainer 10/29); nothing else marks it', async () => {

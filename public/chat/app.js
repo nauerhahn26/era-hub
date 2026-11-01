@@ -380,7 +380,7 @@ reader = createOptionsReader({ delayMs: () => promptMs, name: () => herName,
   speak: (text, signal) => voice.say(text, { role: 'helper', signal }),
   light: item => tileFor(item)?.classList.add('on'), unlight: item => tileFor(item)?.classList.remove('on'),
   // The reading's whole text is one clip at the hub (§13): its gaps never end it.
-  onStart: text => { readingClip = audioStarted(text); turnLog.content(questionMetric, { prompted: true }); },
+  onStart: (text, readings) => { readingClip = audioStarted(text); turnLog.content(questionMetric, { prompted: true, readings }); },
   onEnd: () => { const words = readingClip; readingClip = ''; audioEnded(words); } });
 // Armed when a batch of replies is on screen and hers (not openers, a page, a made set).
 // Nothing is spoken while a press window listens (design 2026-10-27 §4.6; the
@@ -390,10 +390,10 @@ function armReading(state) {
   // Each label is read as it is on screen when the reading reaches it (§11: the answers in full).
   void reader.armed({ id: state.choices.map(choice => choice.id).join(','), items: state.choices.map(choice => ({ id: choice.id, get label() { return shownReply(choice).label; } })) });
 }
-// Any dwell progress or selection on a tile stops the reading at once.
+// A selection on a tile stops the reading at once; a glance (dwell progress)
+// never does (spec 2026-10-28 §6, amended 10/31 night: "it should keep giving
+// her the options until she makes a selection").
 $('grid').addEventListener('dwell:activate', () => reader.cancel());
-new MutationObserver(() => { if (reader.reading && $('grid').querySelector('.dwell-active')) reader.cancel(); })
-  .observe($('grid'), { subtree: true, attributes: true, attributeFilter: ['class'] });
 
 fetch('/settings').then(r => r.json()).then(s => {
   testMode = s.chatTestMode === true; paintTestMode();

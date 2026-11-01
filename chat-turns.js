@@ -76,6 +76,8 @@ const RECORD = shape({
     mode: oneOf(['ask', 'comment']), page: oneOf(['questions', 'comments', 'about']), again: v => v === true,
     // The options were read aloud after a silence (§6).
     prompted: v => v === true, back: v => v === true,
+    // How many readings of the batch started (§6, amended 10/31 night: up to three).
+    readings: v => Number.isSafeInteger(v) && v >= 1 && v <= 3,
     // A question heard by the wake word (§8).
     wake: v => v === true,
     // Yes and No in full were on screen when she chose (stable frame §11).

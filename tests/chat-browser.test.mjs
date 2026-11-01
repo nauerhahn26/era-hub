@@ -380,7 +380,7 @@ test('her pages: lists from settings, ten a page with More and Back, the lit rai
   assert.deepEqual(errors, []);
 });
 
-test('after a silence the options are read aloud: the name, then each label with its tile lit; a selection mid-reading stops it (spec 2026-10-28 §6)', { timeout: 60000 }, async t => {
+test('after a silence the options are read aloud: the name, then each label with its tile lit, three times at most; a glance never stops it, a selection does (spec 2026-10-28 §6)', { timeout: 60000 }, async t => {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-prompt-'));
   const server = serve(scratch); server.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -427,15 +427,22 @@ test('after a silence the options are read aloud: the name, then each label with
   const rolesOf = text => [...new Set(roles.filter(([said]) => said === text).map(([, role]) => role))].sort();
   assert.deepEqual(rolesOf('Sam, your options are'), ['helper']);
   for (const label of ['Music', 'A story']) assert.deepEqual(rolesOf(label), ['helper', 'her'], `"${label}": read by the helper, warmed as her pick`);
+  // Unanswered: read again after the same delay, three readings in all, then quiet (amended 10/31 night).
+  await page.waitForFunction(() => window.__plays === 9 && !document.querySelector('#grid .response.on'), null, { timeout: 30000 });
   await page.waitForTimeout(2500);
-  assert.equal(await page.evaluate(() => window.__plays), 3, 'a batch is read at most once');
-  // A new batch: a selection mid-reading stops it at once.
+  assert.equal(await page.evaluate(() => window.__plays), 9, 'three readings of a batch, then quiet');
+  assert.deepEqual(await page.evaluate(() => window.__lit), ['Music', 'A story', 'Music', 'A story', 'Music', 'A story']);
+  // A new batch: a glance on a tile mid-reading (dwell progress) never stops it; a selection stops it at once.
   await page.evaluate(() => { window.__lit = []; window.__plays = 0; });
   await ask();
   await page.waitForFunction(() => window.__lit.length === 1, null, { timeout: 15000 });
+  await page.evaluate(() => { const tile = [...document.querySelectorAll('#grid .tile.response')].find(el => el.textContent.includes('A story'));
+    tile.classList.add('dwell-active'); setTimeout(() => tile.classList.remove('dwell-active'), 300); });
+  await page.waitForFunction(() => window.__lit.length === 3, null, { timeout: 15000 });
+  assert.deepEqual(await page.evaluate(() => window.__lit), ['Music', 'A story', 'Music'], 'the glance left the reading going, and the next reading came');
   await page.locator('#grid .tile.response', { hasText: 'A story' }).dispatchEvent('click');
-  await page.waitForTimeout(1500);
-  assert.deepEqual(await page.evaluate(() => window.__lit), ['Music'], 'the reading stopped at the selection');
+  await page.waitForTimeout(3000);
+  assert.deepEqual(await page.evaluate(() => window.__lit), ['Music', 'A story', 'Music'], 'the reading stopped at the selection, and never came back');
   assert.equal(await page.locator('#grid .response.on').count(), 0, 'no tile is left lit');
   // The partner dialog: Off / 10 / 12 / 15 / 20 s and her name, saved to the device.
   await page.locator('#partnerOpen').click();
@@ -724,16 +731,16 @@ test('the read-aloud is heard, never silenced: the frames keep their sound and t
   await f.emit(page, { type: 'utterance-sealed', ear: true, earId: 'ear-1', windowId: 'w-1', seq: 1, text: 'music or a story?', windowText: 'music or a story?', generation: f.EAR });
   await f.emit(page, { type: 'batch-sealed', generation: f.EAR, windowId: 'w-1', seq: 1, kind: 'generated', choices: [{ label: 'Music', say: 'Music' }, { label: 'A story', say: 'A story' }] });
   await page.waitForSelector('#grid .response');
-  await page.waitForFunction(() => window.__clips.length >= 3 && window.__clips.every(clip => clip.end), null, { timeout: 15000 });
+  await page.waitForFunction(() => window.__clips.length >= 3 && window.__clips.slice(0, 3).every(clip => clip.end), null, { timeout: 15000 });
   await page.waitForTimeout(800);
-  const clips = await page.evaluate(() => window.__clips);
-  assert.equal(clips.length, 3, 'the name, then each option');
+  // The first reading's clips (a second reading may follow, §6).
+  const clips = (await page.evaluate(() => window.__clips)).slice(0, 3);
   for (const clip of clips) {
     const during = await f.heard(page, clip.start, clip.end);
     assert.ok(during.frames > 0 && during.loud > 0, `the microphone is never silenced while the read-aloud plays: ${JSON.stringify(during)}`);
   }
   const clipped = f.controls.filter(body => body.type === 'clip');
-  assert.deepEqual(clipped.map(body => [body.on, body.text]), [[true, 'Ellie, your options are, Music, A story'],
+  assert.deepEqual(clipped.slice(0, 8).map(body => [body.on, body.text]), [[true, 'Ellie, your options are, Music, A story'],
     [true, 'Ellie, your options are'], [false, undefined], [true, 'Music'], [false, undefined], [true, 'A story'], [false, undefined], [false, undefined]],
     'the reading\'s whole text first (its gaps never end it), each piece inside it');
   assert.deepEqual(f.controls.filter(body => ['cancel', 'pick'].includes(body.type)), [], 'the reading touches nothing of capture');
