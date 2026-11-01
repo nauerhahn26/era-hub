@@ -380,7 +380,7 @@ test('her pages: lists from settings, ten a page with More and Back, the lit rai
   assert.deepEqual(errors, []);
 });
 
-test('after a silence the options are read aloud: the name, then each label with its tile lit, three times at most; a glance never stops it, a selection does (spec 2026-10-28 §6)', { timeout: 60000 }, async t => {
+test('after a silence the options are read aloud: the name, then each label with its tile lit, twice at most; a glance never stops it, a selection does (spec 2026-10-28 §6)', { timeout: 60000 }, async t => {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-prompt-'));
   const server = serve(scratch); server.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -427,11 +427,11 @@ test('after a silence the options are read aloud: the name, then each label with
   const rolesOf = text => [...new Set(roles.filter(([said]) => said === text).map(([, role]) => role))].sort();
   assert.deepEqual(rolesOf('Sam, your options are'), ['helper']);
   for (const label of ['Music', 'A story']) assert.deepEqual(rolesOf(label), ['helper', 'her'], `"${label}": read by the helper, warmed as her pick`);
-  // Unanswered: read again after the same delay, three readings in all, then quiet (amended 10/31 night).
-  await page.waitForFunction(() => window.__plays === 9 && !document.querySelector('#grid .response.on'), null, { timeout: 30000 });
+  // Unanswered: read again after the same delay, two readings in all, then quiet (amended 10/31 night; dad 11/1: "only do 2x").
+  await page.waitForFunction(() => window.__plays === 6 && !document.querySelector('#grid .response.on'), null, { timeout: 30000 });
   await page.waitForTimeout(2500);
-  assert.equal(await page.evaluate(() => window.__plays), 9, 'three readings of a batch, then quiet');
-  assert.deepEqual(await page.evaluate(() => window.__lit), ['Music', 'A story', 'Music', 'A story', 'Music', 'A story']);
+  assert.equal(await page.evaluate(() => window.__plays), 6, 'two readings of a batch, then quiet');
+  assert.deepEqual(await page.evaluate(() => window.__lit), ['Music', 'A story', 'Music', 'A story']);
   // A new batch: a glance on a tile mid-reading (dwell progress) never stops it; a selection stops it at once.
   await page.evaluate(() => { window.__lit = []; window.__plays = 0; });
   await ask();
