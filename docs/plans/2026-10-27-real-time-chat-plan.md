@@ -684,3 +684,20 @@ Dad: "you cannot silence the mic when she talks. You have to handle it."
       readings per batch; `content.readings`. Tests first in chat-prompt +
       chat-browser (a glance mid-reading: the reading continues; a selection
       mid-reading: it stops; the third reading is the last).
+
+## A failed reply never ends the session + the question re-renders (11/1 morning) — spec §14, §15, §10 addendum
+Cause of the morning's lost replies: the reply service account had no credit
+(dad tops it up). The software faults around it:
+- [ ] F1 page: `onChoicesError` fails the turn only (no `shutdown`): session,
+      socket, ear, window stay; the ear resumes; `content.choicesError` from
+      the event's code. Hub: ear record `fault {code}`, one log line, `on`
+      ear records (open/resume with tier). Tests first (chat-ui/chat-browser:
+      a `choices-error` leaves the ear listening and the next wake works;
+      chat-ear-hub: `on`/`fault` records; chat-turns whitelist).
+- [ ] F2 hub: an ear whose idle allowance passed during a sleep closes as
+      idle on the first tick after (clock jump test, 12 h); the switch saved
+      off; the page's gentle line. If the code already does this, pin it and
+      find why 11/1 wrote no `off (idle)` (page reopening the ear at wake?).
+- [ ] F3 page: question strip dwell/click re-renders the replies (spec §15):
+      Back's memory or the local set; a failed job is retried once per look;
+      the reading re-arms. Tests first in chat-frame/chat-browser.

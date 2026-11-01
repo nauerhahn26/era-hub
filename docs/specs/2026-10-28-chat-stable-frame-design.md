@@ -295,3 +295,55 @@ cannot silence the mic when she talks. You have to handle it."
   the words that survive keep their casing and punctuation.
 - Not done: a client-side energy detector for "voice while muted" (no mute
   remains), and a detector that knows her voice from the partner's.
+
+## 14. A failed reply never ends the session (11/1 morning)
+
+Seven wake questions failed with "Replies are unavailable" between 10/31
+5 pm and 11/1 8 am PT. The cause was outside the software: the reply
+service's account had no credit left (every request refused). But each
+failure also ended the Chat session on the page (`onChoicesError` →
+`shutdown`), which closed the audio socket, which turned the ear off; the
+page reopened it a second later or not at all. The partner's next question,
+about pain, was never heard.
+
+- A failed reply job fails the TURN only: the strip says "Replies are
+  unavailable. Your phrases still work." and the question stays on screen;
+  the session, the audio socket, the ear and a button window are untouched;
+  the ear goes on listening (resumed as after any seal). Her pages and the
+  local Yes/No set work as before.
+- The turn record keeps the hub's reason: `reason: 'choices'` as today plus
+  `content.choicesError` = the hub's code (`generation-unavailable`,
+  `generation-invalid`, `generation-refused`, `generation-busy`, …); the hub's
+  `choices-error` event already carries it. The hub also writes an ear record
+  `fault {code}` while the ear is on, and one line to its log
+  (`[chat] replies failed: <code> <http status if any>`), never the service's
+  message text and never a secret.
+- Ear records (§12) gain `on` (the ear opened or resumed: tier, resumed) so
+  the log shows when the ear was listening at all; until now only its ending
+  was written, and a morning with no records could not be read.
+
+## 15. The question re-renders its replies (dad, 11/1 morning)
+
+"If you click the question or she looks at the question, it should re-deliver
+or just re-render the responses … she accidentally made a comment or chose
+to make a comment, but then wanted to actually answer your question."
+
+- A dwell on the question strip, or a partner's touch or click on it, repeats
+  the question aloud (as today, §1) AND puts that question's replies back in
+  the middle when they are not showing: the batch last shown for this
+  question (Back's memory), or the local Yes/No set for a yes-or-no question;
+  a page or a mode she had opened gives way. With the replies already in the
+  middle it only repeats the question. Nothing is asked of the model again.
+- A question whose replies never arrived (a failed job, §14) is asked of the
+  model again by the same look or touch, once per look.
+- The read-aloud timer (§6) re-arms when the replies come back.
+
+## 10 (addendum, 11/1 morning): the ear across a sleep
+
+The device slept from 8:20 pm to 7:40 am PT with the ear on (18 minutes into
+its 30). Nothing streamed while it slept (no record of any kind, the hub was
+frozen with the rest). On waking the ear was listening again by itself and no
+`off (idle)` was written although twelve hours had passed; the switch read
+on. Expected: the first tick after a sleep longer than the idle allowance
+turns the ear off as idle and saves the switch off, like any idle half hour;
+the page shows the gentle line. A pinned test jumps the clock twelve hours.
