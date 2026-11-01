@@ -1026,6 +1026,27 @@
       "owner": ""
     },
     {
+      "id": "era-hub:tests/chat-echo.test.mjs",
+      "purpose": "Her clip is handled, never silenced: stripEcho removes runs of two or more of an in-play clip's words (one-word turns only when a clip word), the partner's words kept; the clip book keeps clips for 8 s",
+      "group": "chat",
+      "lane": "linux",
+      "level": "unit",
+      "dependencies": [
+        "era-hub/chat-echo.js"
+      ],
+      "resources": [
+        "in-process"
+      ],
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-hub:tests/chat-window-hub.test.mjs",
       "purpose": "Listening windows through the hub Chat module: one stream turn kept open, seals on the whole window text as batch-sealed {windowId, seq}, energy-gate fallback, press/cancel/pick/silence/cap/nothing-said closes, window guards, the buttons dispatcher reaching the window",
       "group": "chat",
@@ -1070,7 +1091,8 @@
         "era-hub/chat-ws.js",
         "era-hub/keepalive-fetch.js",
         "era-hub/buttons.js",
-        "era-hub/server.js"
+        "era-hub/server.js",
+        "era-hub/chat-echo.js"
       ],
       "resources": [
         "owned-loopback-services",
@@ -1101,7 +1123,8 @@
         "era-hub/chat-ws.js",
         "era-hub/keepalive-fetch.js",
         "era-hub/buttons.js",
-        "era-hub/server.js"
+        "era-hub/server.js",
+        "era-hub/chat-echo.js"
       ],
       "resources": [
         "owned-loopback-services",

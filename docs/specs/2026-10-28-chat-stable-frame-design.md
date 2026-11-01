@@ -118,12 +118,19 @@ cadence, the tile lit while its clip plays. The name is the device's
 works for anyone. The delay is the device's `chatPromptMs` setting, chosen in
 the partner dialog (off, 10, 12, 15 or 20 s; default 12 s).
 
-The timer starts at the reveal. It is cancelled by any dwell progress on a
-tile, a selection, a page or mode swap, a new hold, or the partner dialog
-opening. The reading never blocks her: a dwell during it selects as usual and
-stops the reading. YES and NO are not read. A batch is read at most once.
-The turn record (test mode) gains `content.prompted: true` when a reading
-started and keeps `selected` as usual, so prompted turns can be compared.
+The timer starts at the reveal. It is cancelled by a selection, a page or
+mode swap, a new hold, Clear or Back, or the partner dialog opening. A glance
+does NOT stop it (dad, 10/31 night: "it stops reading just at the first
+glance, which is not a good user experience. It should keep giving her the
+options until she makes a selection"): dwell progress on a tile neither
+cancels the timer nor the reading; until 10/31 it did. The reading never
+blocks her: a dwell during it selects as usual, and the selection stops the
+reading. YES and NO are not read. After a full reading the timer re-arms
+with the same delay, so an unanswered batch is read again, up to three
+readings per batch (then quiet; the partner can repeat the question). The
+turn record (test mode) gains `content.prompted: true` when a reading started
+(and `content.readings: n`) and keeps `selected` as usual, so prompted turns
+can be compared.
 
 ## 7. Her gaze never ends a hold
 
@@ -179,9 +186,10 @@ buttons or interrupting things."
   own clock or the second press; her pick no longer ends it (this replaces
   design 2026-10-27 §4.4 "a pick wins").
 - Her own clip is kept out of the stream by echo cancellation on the
-  microphone track and by sending silence in place of the frames while the
-  clip plays (plus 150 ms), so the service's timeline stays continuous and the
-  partner's words before and after the clip are kept.
+  microphone track and, since 10/31 night, by the hub removing the clip's
+  words from any transcript that arrives while it plays (§13). Until then the
+  page sent silence in place of the frames while the clip played, which
+  muted the partner too (a question was lost that way twice on 10/31).
 - Considered and not needed: a grace period after the hold's release. The
   hold already locks her targets, and the streaming service starts the reply
   before release.
@@ -243,7 +251,47 @@ mode is on the hub appends ear records to the day's chat-turns log (`kind:
 'ear'`, one per event, private device data like every record): each ear
 turn's text and tier (cheap or main), tier changes and engagements with the
 replayed milliseconds, every seal with what the wake rule found, pause and
-resume with their reasons, off with its reason, socket losses, and the page's
-gate periods (each clip's start and end, and the other-page gate) posted by
-the page as `control {type:'gate', on, at}`. The partner dialog's diagnostics
+resume with their reasons, off with its reason, socket losses, and her clips
+(each clip's start and end with its words, from this page or another) posted
+by the page as `control {type:'clip', on, text, at}`, plus `echo` records for
+what the hub removed (§13). The partner dialog's diagnostics
 box shows the last twelve ear lines. Nothing is sent anywhere but the hub.
+
+## 13. Her clip is handled, never silenced (dad, 10/31 night)
+
+A second question was lost on 10/31 (3:53 pm PT, Listen mode): the ear records
+(§12) show the main tier live and hearing the room, and seven of her clips in
+one minute, each muting the microphone for its length plus the tail, about
+2 s. The partner's two-second question fell inside those mutes. Dad: "you
+cannot silence the mic when she talks. You have to handle it."
+
+- The microphone is never silenced. §9's "silence in place of the frames
+  while the clip plays" is withdrawn: the page sends the real frames during
+  her clips, the reading aloud (§6), press tones and the device voice, to the
+  ear and to a button window alike. Echo cancellation on the track stays.
+- The page tells the hub what is being spoken. When a clip starts the page
+  posts `control {type:'clip', on:true, text, at, source}` with the words the
+  clip speaks (her words, or the reading's whole text); when it ends,
+  `{type:'clip', on:false, at, source}`. `source` is `page` or `other` (another
+  Chat page on the device, whose broadcast now carries its text). This replaces
+  the `gate` control and the `gate` ear record; the ear record is `clip`.
+- The hub handles the echo. It keeps the clips of the last few seconds (text,
+  start, end or still playing). A transcript turn that arrives while a clip
+  plays or within 3 s after it ends is compared with that clip's words: any run
+  of two or more of the clip's words, in the clip's order, is removed from the
+  turn; a one-word clip (Yes. No.) removes only a turn that is just that word.
+  A turn with no words left is dropped: no seal, no wake, no question. A turn
+  with words left goes on with those words only: the partner's words during
+  her clip survive, and the wake rule (§8) runs on them. This applies to every
+  tier (ear and main), to a button window and to a held question, at the
+  seal, and to the partials the page shows and speculates on.
+- Ear records (§12) gain `clip` (on/off, source, the text) and `echo` (what
+  arrived, which clip matched, what was kept or `dropped`; turn-ends and
+  finals only, never partials). The diagnostics box shows this page's own
+  clip starts; `echo` lines live only in the hub's log (the hub sends the
+  page no ear records). Built 11/1: a one-word turn also goes when that word
+  is in any clip in play (her "Yes." heard back; her name split off the
+  reading), a clip whose end never arrives counts as ended after 30 s, and
+  the words that survive keep their casing and punctuation.
+- Not done: a client-side energy detector for "voice while muted" (no mute
+  remains), and a detector that knows her voice from the partner's.

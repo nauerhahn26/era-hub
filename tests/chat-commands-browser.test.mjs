@@ -401,7 +401,7 @@ test('her pick while the window listens speaks the tile and touches nothing of c
   assert.deepEqual(f.errors, []);
 });
 
-test('a selection during an open press window seals no utterance and brings no replacement batch: her clip goes out as silence (maintainer 10/29)', { timeout: 60000 }, async t => {
+test('a selection during an open press window seals no utterance and brings no replacement batch: her clip is heard, its words go to the hub (maintainer 10/29, §13)', { timeout: 60000 }, async t => {
   const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })] }, limits: { windowSilenceMs: 6000 } });
   await f.load();
   await f.until(() => f.api.commands.state().connected);
@@ -751,12 +751,13 @@ test('the window is not a hold: its tiles stay dwell targets and her pick speaks
   await f.page.waitForFunction(() => document.body.dataset.listening === 'false', null, { timeout: 10000 });
   assert.equal(await f.page.evaluate(() => document.body.dataset.replacing), 'true', 'pasta still waits after the close: her gaze is on Chicken');
   const plays = await f.page.evaluate(() => window.__plays);
-  await f.page.waitForTimeout(1200);
-  assert.equal(await f.page.evaluate(() => window.__plays), plays, 'her dwell on Chicken keeps the reading off');
+  // A glance never keeps the reading off (spec 2026-10-28 §6, amended 10/31 night: only a selection stops it).
+  await f.page.waitForFunction(n => window.__plays > n, plays, { timeout: 5000 });
   await f.restOffTiles();
   await f.page.waitForFunction(() => document.body.dataset.replacing === 'false', null, { timeout: 5000 });
   assert.deepEqual(await f.shown(), byCell('Chicken', 'Fish', 'Pasta'));
-  await f.page.waitForFunction(n => window.__plays > n, plays, { timeout: 5000 });
+  const swapped = await f.page.evaluate(() => window.__plays);
+  await f.page.waitForFunction(n => window.__plays > n, swapped, { timeout: 5000 });
   await f.page.waitForFunction(() => document.querySelector('.tile.response.on'), null, { timeout: 5000 });
   const lit = [];
   for (let i = 0; i < 30 && !lit.includes('Pasta'); i++) { lit.push(...await litLabels(f.page)); await f.page.waitForTimeout(100); }

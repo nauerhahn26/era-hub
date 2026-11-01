@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const source = await readFile(new URL('../public/chat/prompt.js', import.meta.url), 'utf8');
-const { createOptionsReader, PROMPT_GAP_MS } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const { createOptionsReader, PROMPT_GAP_MS, PROMPT_READINGS } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 function clock() {
   let at = 0, seq = 0; const timers = new Map();
@@ -48,7 +48,8 @@ test('after the silence the name and each label are read in order, each tile lit
   await c.advance(10000);
   assert.deepEqual(v.log, ['say:Sam, your options are', 'light:Chicken', 'say:Chicken', 'unlight:Chicken',
     'light:Fish', 'say:Fish', 'unlight:Fish', 'light:Sushi', 'say:Sushi', 'unlight:Sushi']);
-  assert.deepEqual(await done, { read: 3, cancelled: false });
+  await c.advance(60000);
+  assert.deepEqual(await done, { read: 3, cancelled: false, readings: 3 });
   assert.ok(PROMPT_GAP_MS >= 250 && PROMPT_GAP_MS <= 500);
 });
 
@@ -57,7 +58,7 @@ test('a natural cadence: a short gap between items, none before the first or aft
   const reader = createOptionsReader({ delayMs: 1000, name: 'Sam', speak: (t, s) => { at.push(c.now()); return v.speak(t, s); }, light() {}, unlight() {}, ...c });
   const done = reader.armed(batch('1', ['A one', 'A two']));
   await c.advance(10000); await done;
-  assert.deepEqual(at, [1000, 1500, 2000 + PROMPT_GAP_MS]);
+  assert.deepEqual(at.slice(0, 3), [1000, 1500, 2000 + PROMPT_GAP_MS]);
 });
 
 test('cancel stops the timer before it fires, or the reading at once, and unlights the lit tile', async () => {
@@ -65,34 +66,34 @@ test('cancel stops the timer before it fires, or the reading at once, and unligh
   const reader = createOptionsReader({ delayMs: 5000, name: 'Sam', ...v, ...c });
   const before = reader.armed(batch('1', ['Chicken', 'Fish']));
   await c.advance(4000); reader.cancel();
-  assert.deepEqual(await before, { read: 0, cancelled: true }); assert.equal(c.pending(), 0);
+  assert.deepEqual(await before, { read: 0, cancelled: true, readings: 0 }); assert.equal(c.pending(), 0);
   await c.advance(10000); assert.deepEqual(v.log, []);
   const during = reader.armed(batch('2', ['Chicken', 'Fish']));
   await c.advance(5000 + 500 + 200); // into Chicken's clip
   assert.deepEqual(v.log, ['say:Sam, your options are', 'light:Chicken', 'say:Chicken']);
   reader.cancel();
-  assert.deepEqual(await during, { read: 0, cancelled: true });
+  assert.deepEqual(await during, { read: 0, cancelled: true, readings: 1 });
   assert.deepEqual(v.log.slice(3), ['unlight:Chicken']);
   await c.advance(10000); assert.equal(v.log.length, 4, 'nothing more is said');
 });
 
-test('a batch is read at most once; off (0) never arms; a new batch re-arms and replaces the old timer', async () => {
+test('the page arms a batch once; off (0) never arms; a new batch re-arms and replaces the old timer', async () => {
   const c = clock(), v = voice(c); let delay = 0;
   const reader = createOptionsReader({ delayMs: () => delay, name: 'Sam', ...v, ...c });
-  assert.deepEqual(await reader.armed(batch('off', ['A'])), { read: 0, cancelled: true }); assert.equal(c.pending(), 0);
+  assert.deepEqual(await reader.armed(batch('off', ['A'])), { read: 0, cancelled: true, readings: 0 }); assert.equal(c.pending(), 0);
   delay = 2000;
   const first = reader.armed(batch('1', ['A']));
   const again = reader.armed(batch('1', ['A']));
-  assert.deepEqual(await again, { read: 0, cancelled: true }, 'the same batch is not armed twice');
-  await c.advance(5000); assert.deepEqual(await first, { read: 1, cancelled: false });
-  assert.deepEqual(await reader.armed(batch('1', ['A'])), { read: 0, cancelled: true }, 'a read batch is never read again');
+  assert.deepEqual(await again, { read: 0, cancelled: true, readings: 0 }, 'the same batch is not armed twice');
+  await c.advance(20000); assert.deepEqual(await first, { read: 1, cancelled: false, readings: 3 });
+  assert.deepEqual(await reader.armed(batch('1', ['A'])), { read: 0, cancelled: true, readings: 0 }, 'a read batch is never armed again');
   const old = reader.armed(batch('2', ['B']));
   await c.advance(1000);
   const fresh = reader.armed(batch('3', ['C']));
-  assert.deepEqual(await old, { read: 0, cancelled: true });
-  await c.advance(5000); assert.deepEqual(await fresh, { read: 1, cancelled: false });
-  assert.deepEqual(v.log.filter(line => line.startsWith('say:') && line !== 'say:Sam, your options are'), ['say:A', 'say:C']);
-  assert.deepEqual(await reader.armed(batch('4', [])), { read: 0, cancelled: true }, 'nothing to read');
+  assert.deepEqual(await old, { read: 0, cancelled: true, readings: 0 });
+  await c.advance(20000); assert.deepEqual(await fresh, { read: 1, cancelled: false, readings: 3 });
+  assert.deepEqual(v.log.filter(line => line.startsWith('say:') && line !== 'say:Sam, your options are'), ['say:A', 'say:A', 'say:A', 'say:C', 'say:C', 'say:C']);
+  assert.deepEqual(await reader.armed(batch('4', [])), { read: 0, cancelled: true, readings: 0 }, 'nothing to read');
 });
 
 test('a clip that fails or a light that throws never leaves a tile lit or breaks the reading', async () => {
@@ -102,7 +103,7 @@ test('a clip that fails or a light that throws never leaves a tile lit or breaks
     light: item => lit.add(item.label), unlight: item => lit.delete(item.label) });
   const done = reader.armed(batch('1', ['Chicken', 'Fish', 'Beef']));
   await c.advance(5000);
-  assert.deepEqual(await done, { read: 3, cancelled: false }); assert.equal(lit.size, 0);
+  assert.deepEqual(await done, { read: 3, cancelled: false, readings: 3 }); assert.equal(lit.size, 0);
 });
 
 test('each label is read as it is on screen when the reading reaches it (spec 2026-10-28 §11: Yes and No in full)', async () => {
@@ -114,4 +115,70 @@ test('each label is read as it is on screen when the reading reaches it (spec 20
   shown.no = "No, I'm not angry";
   await c.advance(10000);
   assert.deepEqual(v.log.filter(line => line.startsWith('say:')), ['say:Sam, your options are', "say:Yes, I'm angry", "say:No, I'm not angry", "say:I'm not sure"]);
+});
+
+// Her clip is handled, never silenced (spec 2026-10-28 §13): the page tells the
+// hub the reading's whole text as one clip, from its first word to its end or
+// its cancel, so the gaps between the pieces never end it.
+test('onStart gets the reading\'s whole spoken text and its number; onEnd follows each reading\'s end or its cancel, once', async () => {
+  const c = clock(), v = voice(c), seen = [];
+  const reader = createOptionsReader({ delayMs: 1000, name: 'Sam', ...v, onStart: (text, n) => seen.push(['start', text, n]), onEnd: () => seen.push(['end']), ...c });
+  const done = reader.armed(batch('1', ['Chicken', 'Fish']));
+  await c.advance(1000);
+  assert.deepEqual(seen, [['start', 'Sam, your options are, Chicken, Fish', 1]]);
+  await c.advance(2000); // the first reading ends at 2850
+  assert.deepEqual(seen.slice(1), [['end']]);
+  await c.advance(1000); // the second starts at 3850
+  assert.deepEqual(seen.slice(2), [['start', 'Sam, your options are, Chicken, Fish', 2]]);
+  reader.cancel(); await done;
+  assert.deepEqual(seen.slice(3), [['end']]);
+  seen.length = 0; seen.push('-', '-');
+  const cancelled = reader.armed(batch('2', ['Juice']));
+  await c.advance(1200); reader.cancel(); await cancelled;
+  assert.deepEqual(seen.slice(2), [['start', 'Sam, your options are, Juice', 1], ['end']]);
+  const early = reader.armed(batch('3', ['Tea']));
+  await c.advance(500); reader.cancel(); await early;
+  assert.equal(seen.length, 4, 'a cancel before the reading starts is no clip');
+  const nameless = createOptionsReader({ delayMs: 1000, ...v, onStart: text => seen.push(['start', text, 1]), ...c });
+  nameless.armed(batch('4', ['Tea'])); await c.advance(1000);
+  assert.deepEqual(seen.at(-1), ['start', 'Your options are, Tea', 1]);
+});
+
+// The reading keeps going until she selects (spec 2026-10-28 §6, amended
+// 10/31 night): after a full reading the same delay re-arms, three readings at
+// most per batch, then quiet; only a cancel (a selection, a swap, a hold,
+// Clear, Back, the partner dialog, a new batch) stops it.
+test('three readings of an unanswered batch, each the delay after the last ended, then quiet', async () => {
+  const c = clock(), v = voice(c), starts = [];
+  const reader = createOptionsReader({ delayMs: () => 12000, name: 'Sam', ...c, light() {}, unlight() {},
+    speak: (text, signal) => { if (text === 'Sam, your options are') starts.push(c.now()); return v.speak(text, signal); } });
+  assert.equal(PROMPT_READINGS, 3);
+  const done = reader.armed(batch('1', ['Chicken', 'Fish']));
+  const length = 500 + 500 + PROMPT_GAP_MS + 500; // the intro, Chicken, the gap, Fish
+  await c.advance(12000 + length + 12000 - 1);
+  assert.deepEqual(starts, [12000], 'nothing before the delay after the first reading');
+  assert.equal(reader.readings, 1); assert.equal(reader.reading, true, 'the reader waits to read again');
+  await c.advance(1);
+  assert.deepEqual(starts, [12000, 12000 + length + 12000]);
+  await c.advance(120000);
+  assert.deepEqual(starts, [12000, 24000 + length, 36000 + 2 * length], 'the gap between readings is the delay');
+  assert.deepEqual(await done, { read: 2, cancelled: false, readings: 3 });
+  assert.equal(c.pending(), 0, 'quiet after the third');
+  assert.equal(v.log.filter(line => line === 'say:Fish').length, 3);
+});
+
+test('a cancel mid-reading, or in the wait between readings, stops it for good', async () => {
+  const c = clock(), v = voice(c);
+  const reader = createOptionsReader({ delayMs: 1000, name: 'Sam', ...v, ...c });
+  const mid = reader.armed(batch('1', ['Chicken', 'Fish']));
+  await c.advance(1000 + 1850 + 1000 + 600); // into the second reading's Chicken
+  assert.equal(v.log.filter(line => line === 'say:Chicken').length, 2);
+  reader.cancel();
+  assert.deepEqual(await mid, { read: 0, cancelled: true, readings: 2 });
+  await c.advance(60000); assert.equal(v.log.filter(line => line === 'say:Chicken').length, 2, 'nothing more');
+  const between = reader.armed(batch('2', ['Tea']));
+  await c.advance(1000 + 1000 + 500); // the first reading done, waiting for the second
+  reader.cancel();
+  assert.deepEqual(await between, { read: 1, cancelled: true, readings: 1 });
+  await c.advance(60000); assert.equal(v.log.filter(line => line === 'say:Tea').length, 1);
 });

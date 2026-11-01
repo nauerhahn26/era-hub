@@ -83,24 +83,12 @@ const turnLog = createTurnLog({ enabled: () => testMode,
 const voice = createChatVoice({ storage: persistence.voiceStorage,
   // Characters are charged to the turn whose choices or spoken words they are; warming the fixed phrases is no turn's.
   onFetch: (chars, words) => { turnLog.fetched(speechMetric, chars, words) || turnLog.fetched(questionMetric, chars, words); } });
-// Her own voice is never heard: while anything of this page plays, and for the
-// tail after it, the ear and a press window send silence (§8, maintainer 10/29).
-// Every path counts (10/31 turn record: the read-aloud prefix came back as a
-// wake question): each voice.say from the request, each media element from
-// 'playing' to its end, the device voice for as long as it is speaking (its
-// end event can come early), the press tones, and any other Chat page's audio.
-{ const say = voice.say; voice.say = async (...args) => { audioStarted(); try { return await say(...args); } finally { audioEnded(); } }; }
-{
-  const play = HTMLMediaElement.prototype.play;
-  HTMLMediaElement.prototype.play = function (...args) {
-    if (!gatedMedia.has(this)) {
-      gatedMedia.add(this); let on = false;
-      this.addEventListener('playing', () => { if (!on) { on = true; audioStarted(); } });
-      for (const type of ['ended', 'pause', 'error', 'emptied']) this.addEventListener(type, () => { if (on) { on = false; audioEnded(); } });
-    }
-    return play.apply(this, args);
-  };
-}
+// Her clip is handled, never silenced (spec 2026-10-28 §13; dad 10/31: "you
+// cannot silence the mic when she talks"). The microphone's frames always go
+// out as they are; every voice.say (her words, the corners, the question strip,
+// a story, the device voice) tells the hub the words it speaks at its start and
+// its end, and the hub removes them from what the room's transcript hears.
+{ const say = voice.say; voice.say = async (text, ...rest) => { const words = audioStarted(text); try { return await say(text, ...rest); } finally { audioEnded(words); } }; }
 const metrics = observeMetrics(createTurnMetrics({ storage: persistence.metricsStorage, limit: 40 }), turnLog);
 if (JSON.stringify(metrics.snapshot().turns) !== JSON.stringify(savedSettings.timings)) persistence.stageTimings(metrics.snapshot().turns);
 const AUDIO_POST_MS = 2000;
@@ -140,9 +128,8 @@ let stories = savedSettings.stories;
 // window machine decides when it ends; the page listens, shows, and plays the tones.
 let press = null, pressBusy = false;
 const windowOpen = () => press !== null && !press.closed;
+// The press tones are tones, not words: the hub is told nothing of them (§13).
 const tones = createTones();
-// The press tones are the page's audio too: the ear and a press window never hear them (§8).
-for (const kind of ['listening', 'done']) { const tone = tones[kind]; tones[kind] = async () => { audioStarted(); try { return await tone(); } finally { audioEnded(); } }; }
 const FRAMES_AFTER_TONE_MS = 200;
 
 // Before any question the middle shows the openers (spec 2026-10-28 §1).
@@ -162,52 +149,40 @@ let answered = null, pickedTurn = -1;
 const backStack = createBackStack(8);
 let shownChoices = [], shownQuestion = '', restoring = false, clearing = false;
 // Listen for <name> (spec 2026-10-28 §8): the device's switch, the hub's ear
-// window ({ generation, windowId }), and the gate that keeps her clips unheard.
+// window ({ generation, windowId }).
 // earNotice: the ear's gentle status line (spec §10): an auto-off warning, or the line after it turned itself off.
 let earNotice = '';
-let wakeMode = false, ear = null, earStarting = null, clipsPlaying = 0, gateUntil = 0, wakeBusy = false;
-const EAR_TAIL_MS = 150, gatedMedia = new WeakSet();
-// The tail covers the device's own audio path too: what plays reaches the
-// speaker, and the microphone's frames reach this page, a little late.
-const tailMs = () => EAR_TAIL_MS + Math.min(500, Math.round(mic?.latencyMs?.() || 0));
-function audioStarted() { clipsPlaying++; audioChannel?.postMessage({ from: PAGE_ID, playing: true }); if (clipsPlaying === 1) gateMark('page', true); }
-function audioEnded() {
-  const was = clipsPlaying;
-  clipsPlaying = Math.max(0, clipsPlaying - 1);
-  gateUntil = Math.max(gateUntil, performance.now() + tailMs());
-  if (!clipsPlaying) audioChannel?.postMessage({ from: PAGE_ID, playing: false, tailMs: tailMs() });
-  if (was && !clipsPlaying) gateMark('page', false);
+let wakeMode = false, ear = null, earStarting = null, wakeBusy = false;
+// A clip's words (at most 600 characters, the voice's own limit) or '' for a clip of none.
+const clipWords = text => (typeof text === 'string' ? text.trim().replace(/\s+/g, ' ').slice(0, 600) : '');
+// A clip starts: its words go to the hub and to any other Chat page. Returns the words, for audioEnded.
+function audioStarted(text) {
+  const words = clipWords(text);
+  if (words) { audioChannel?.postMessage({ from: PAGE_ID, playing: true, text: words }); sendClip('page', true, words); }
+  return words;
 }
-// Another Chat page on this device (a relaunched kiosk, a second tab) plays her voice too.
-const PAGE_ID = Math.random().toString(36).slice(2), othersUntil = new Map();
+function audioEnded(words) {
+  if (!words) return;
+  audioChannel?.postMessage({ from: PAGE_ID, playing: false, text: words });
+  sendClip('page', false);
+}
+// Another Chat page on this device (a relaunched kiosk, a second tab) plays her voice too: its words are an `other` clip.
+const PAGE_ID = Math.random().toString(36).slice(2);
 const audioChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('era-chat-audio') : null;
 if (audioChannel) audioChannel.onmessage = ({ data }) => {
   if (!data || data.from === PAGE_ID || typeof data.from !== 'string') return;
-  // A page that stops answering mid-clip frees the ear after 30 s at most.
-  othersUntil.set(data.from, performance.now() + (data.playing ? 30000 : Math.min(1000, Number(data.tailMs) || EAR_TAIL_MS)));
-  gateMark('other', data.playing === true);
+  const words = clipWords(data.text);
+  if (words) sendClip('other', data.playing === true, words);
 };
-// ---- what the ear heard (spec 2026-10-28 §12) ----
-// The gate's periods go to the hub as `control {type:'gate'}` while the ear
-// listens: on with the first clip, off when the last ends; an off followed by
-// an on within GATE_MERGE_MS (the reading's gaps, one clip cutting another) is
-// one period. `other`: another Chat page playing her voice.
-const GATE_MERGE_MS = 500;
-const gates = { page: { on: false, timer: null }, other: { on: false, timer: null } };
-function gateMark(source, on) {
-  const gate = gates[source];
-  if (on) {
-    if (gate.timer) { clearTimeout(gate.timer); gate.timer = null; return; }
-    if (!gate.on) { gate.on = true; sendGate(source, true); }
-    return;
-  }
-  if (!gate.on || gate.timer) return;
-  gate.timer = setTimeout(() => { gate.timer = null; gate.on = false; sendGate(source, false); }, GATE_MERGE_MS);
-}
-function sendGate(source, on) {
-  if (!ear || !session) return;
-  earLine(`gate ${on ? 'on' : 'off'}${source === 'other' ? ' (another page)' : ''}`);
-  void control('gate', { on, at: Math.round(performance.now() * 10) / 10, ...(source === 'other' ? { source } : {}) }).catch(() => null);
+// ---- what the ear heard (spec 2026-10-28 §12-§13) ----
+// Every clip's start (with its words) and end goes to the hub as
+// `control {type:'clip'}`, for the ear, a press window and a hold alike; no
+// merging, so no clip's words are lost. The hub keeps the ear's records; the
+// diagnostics box shows this page's clip starts while the ear listens.
+function sendClip(source, on, text) {
+  if (!session) return;
+  if (on && ear) earLine(`clip ${source === 'other' ? '(another page) ' : ''}${text.slice(0, 120)}`);
+  void control('clip', { on, at: Math.round(performance.now() * 10) / 10, ...(on ? { text } : {}), ...(source === 'other' ? { source } : {}) }).catch(() => null);
 }
 // The partner dialog's diagnostics box: the current line, then the last twelve ear lines.
 const earLines = [];
@@ -220,6 +195,7 @@ function earLine(text) {
 }
 function paintDiagnostics() { const box = document.getElementById('diagnostics'); if (box) box.textContent = [diagnosticLine, ...earLines].filter(Boolean).join('\n'); }
 let reader = null; // the options reader (public/chat/prompt.js), made once the voice exists
+let readingClip = ''; // the reading's whole text while it is read (its clip at the hub)
 // Reading the options aloud (spec 2026-10-28 §6): the device's delay (0 = off)
 // and her name, from /settings (chatPromptMs, chatName).
 let promptMs = 0, herName = '';
@@ -403,7 +379,9 @@ const tileFor = item => $('grid').querySelector(`.tile.response[data-choice-id="
 reader = createOptionsReader({ delayMs: () => promptMs, name: () => herName,
   speak: (text, signal) => voice.say(text, { role: 'helper', signal }),
   light: item => tileFor(item)?.classList.add('on'), unlight: item => tileFor(item)?.classList.remove('on'),
-  onStart: () => turnLog.content(questionMetric, { prompted: true }) });
+  // The reading's whole text is one clip at the hub (§13): its gaps never end it.
+  onStart: (text, readings) => { readingClip = audioStarted(text); turnLog.content(questionMetric, { prompted: true, readings }); },
+  onEnd: () => { const words = readingClip; readingClip = ''; audioEnded(words); } });
 // Armed when a batch of replies is on screen and hers (not openers, a page, a made set).
 // Nothing is spoken while a press window listens (design 2026-10-27 §4.6; the
 // microphone is open): the batch showing at the window's close arms then.
@@ -412,10 +390,10 @@ function armReading(state) {
   // Each label is read as it is on screen when the reading reaches it (§11: the answers in full).
   void reader.armed({ id: state.choices.map(choice => choice.id).join(','), items: state.choices.map(choice => ({ id: choice.id, get label() { return shownReply(choice).label; } })) });
 }
-// Any dwell progress or selection on a tile stops the reading at once.
+// A selection on a tile stops the reading at once; a glance (dwell progress)
+// never does (spec 2026-10-28 §6, amended 10/31 night: "it should keep giving
+// her the options until she makes a selection").
 $('grid').addEventListener('dwell:activate', () => reader.cancel());
-new MutationObserver(() => { if (reader.reading && $('grid').querySelector('.dwell-active')) reader.cancel(); })
-  .observe($('grid'), { subtree: true, attributes: true, attributeFilter: ['class'] });
 
 fetch('/settings').then(r => r.json()).then(s => {
   testMode = s.chatTestMode === true; paintTestMode();
@@ -813,9 +791,7 @@ function swapAtNeutral() {
 }
 
 function sendFrame(bytes) {
-  // Her own clip is never heard by the ear or a press window: silence goes in
-  // its place, so the stream's timeline stays continuous (maintainer 10/29).
-  if ((ear || (press && !press.closed)) && clipGated()) bytes = new ArrayBuffer(bytes.byteLength);
+  // The frames go out as they are, her clips included: the hub handles her words (§13).
   if (earFrame(bytes)) return;
   if (!session && mode !== 'opening') return;
   if (holding && ['opening', 'capture'].includes(mode)) holdFrames++;
@@ -1276,13 +1252,7 @@ function stopEar() {
 const earIdle = () => !!ear && !ear.paused && !!mic && !holding && !askPending && mode === 'blocked' && !(press && !press.closed) && controller.state.phase !== 'Capturing question';
 // Between holds and windows the ear collects every frame (begin is a no-op while collecting).
 function earTick() { if (earIdle()) mic.begin(); }
-// An ear frame: the ear's generation, the socket's sequence (silence while her clip plays, see sendFrame).
-const clipGated = () => {
-  const now = performance.now();
-  // The device voice: gated while it speaks, and for the tail after it stops.
-  if (globalThis.speechSynthesis?.speaking === true) gateUntil = Math.max(gateUntil, now + tailMs());
-  return clipsPlaying > 0 || now < gateUntil || [...othersUntil.values()].some(until => until > now);
-};
+// An ear frame: the ear's generation, the socket's sequence.
 function earFrame(bytes) {
   if (!earIdle()) return false;
   if (!audioSocket || audioSocket.readyState !== WebSocket.OPEN || audioSocket.bufferedAmount > SOCKET_BUFFER_LIMIT) return true;

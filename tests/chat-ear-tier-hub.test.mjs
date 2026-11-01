@@ -265,3 +265,42 @@ test('ear records (spec §12): the ear tier\'s own turns, the engagement with th
   await until(() => of('tier').length === 2);
   assert.deepEqual(of('tier')[1].tier, 'ear'); assert.equal('replayedMs' in of('tier')[1], false);
 });
+
+// ---- Her clip is handled, never silenced (spec 2026-10-28 §13, plan H2) ----
+const earRecords = () => { const records = []; return { records, onEar: record => { records.push(record); }, of: (...events) => records.filter(r => events.includes(r.event)) }; };
+test('ear tier: the reading heard back is no turn and no wake; the main stream never engages', async t => {
+  const clock = { now: 7000000 };
+  const service = await tieredService(t, { 'ear-model': { 3: [ENDED('Ellie, your options are Yes. No.')] } });
+  const log = earRecords();
+  const h = await hub(t, { service, env: EAR_ENV, clock: () => clock.now, limits: { windowTickMs: 10 }, extra: { onEar: log.onEar } });
+  const s = await h.session();
+  await s.open({ ear: true });
+  await until(() => s.events('ear').length === 1);
+  assert.equal((await s.control('clip', { on: true, at: 1, text: 'Ellie, your options are Yes. No.' })).status, 200);
+  await play(s, service, clock, 1, 6);
+  await until(() => log.of('echo').length === 1);
+  await pause(60);
+  assert.deepEqual(log.of('echo').map(r => [r.tier, r.kept]), [['ear', 'dropped']]);
+  assert.equal(log.of('turn', 'seal').length, 0, 'no turn, no seal');
+  assert.equal(s.events('ear').filter(e => e.state === 'tier').length, 0, 'no engagement');
+  assert.ok(service.of('stream-model').every(c => c.frames === 0), 'the main stream hears nothing');
+});
+
+test('ear tier: the partner\'s words beside her clip wake the main stream, which seals them as the question', async t => {
+  const clock = { now: 7000000 };
+  const service = await tieredService(t, { 'ear-model': { 3: [ENDED("Ellie are you hungry yes I'm tired")] },
+    'stream-model': { 6: [ENDED("Ellie are you hungry yes I'm tired")] } });
+  const log = earRecords();
+  const h = await hub(t, { service, env: EAR_ENV, clock: () => clock.now, limits: { windowTickMs: 10 }, extra: { onEar: log.onEar } });
+  const s = await h.session();
+  await s.open({ ear: true });
+  await until(() => s.events('ear').length === 1);
+  await s.control('clip', { on: true, at: 1, text: "Yes, I'm tired." });
+  await play(s, service, clock, 1, 3);
+  await until(() => s.events('ear').some(e => e.state === 'tier'));
+  await play(s, service, clock, 4, 8);
+  await until(() => s.events('utterance-sealed').length === 1);
+  assert.equal(s.events('utterance-sealed')[0].text, 'are you hungry');
+  assert.deepEqual(log.of('turn').map(r => [r.tier, r.text]), [['ear', 'Ellie are you hungry'], ['main', 'Ellie are you hungry']]);
+  assert.deepEqual(log.of('echo').map(r => [r.tier, r.kept, r.clip]), [['ear', 'Ellie are you hungry', "yes I'm tired"], ['main', 'Ellie are you hungry', "yes I'm tired"]]);
+});

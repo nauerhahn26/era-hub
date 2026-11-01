@@ -455,9 +455,9 @@ test('the answers in full are aborted by a new question, a cancel and a close, a
 // Every ear event reaches the hub's `onEar` (server.js: the chat-turns writer,
 // which keeps them only while test mode is on): each turn's words and tier,
 // each seal and what the wake rule found, pause/resume/off with reasons, a lost
-// socket, and the page's gate periods (`control {type:'gate'}`).
+// socket, and her clips as the page posts them (`control {type:'clip'}`, §13).
 const earOf = records => (...events) => records.filter(record => events.includes(record.event));
-test('ear records: each turn and seal with what the wake rule found, pause and resume with reasons, off; the page\'s gate', async t => {
+test('ear records: each turn and seal with what the wake rule found, pause and resume with reasons, off; her clips', async t => {
   const service = await turnsService(t, { 2: [ENDED('what time is it')], 4: [ENDED('Ellie, are you hungry', 1)] }, { onTerminate: [ENDED('would you like a story')] });
   const records = [], ear = earOf(records);
   let now = 1000000;
@@ -469,12 +469,14 @@ test('ear records: each turn and seal with what the wake rule found, pause and r
   assert.deepEqual(ear('turn').map(r => [r.tier, r.text]), [['main', 'what time is it'], ['main', 'Ellie, are you hungry']]);
   assert.deepEqual(ear('seal').map(r => [r.text, r.wake, r.question]), [['what time is it', 'none', undefined], ['Ellie, are you hungry', 'question', 'are you hungry']]);
   assert.ok(records.every(r => r.earId === opened.earId && r.at === now), 'the ear and the hub\'s clock on every line');
-  // The page's gate: recorded, nothing else changes; a bad one is refused.
-  assert.equal((await s.control('gate', { on: true, at: 1234.5 })).status, 200);
-  assert.equal((await s.control('gate', { on: false, at: 1300, source: 'other' })).status, 200);
-  for (const bad of [{ on: 'yes', at: 1 }, { on: true }, { on: true, at: 1, source: 'tab' }]) assert.equal((await s.control('gate', bad)).status, 400, JSON.stringify(bad));
-  assert.deepEqual(ear('gate').map(r => [r.on, r.source, r.pageAt]), [[true, 'page', 1234.5], [false, 'other', 1300]]);
-  assert.equal(s.events('ear').length, 1, 'the gate never pauses the ear');
+  // Her clips: recorded with their words, nothing else changes; a bad one is refused; the old gate is gone.
+  assert.equal((await s.control('clip', { on: true, at: 1234.5, text: "Yes, I'm tired." })).status, 200);
+  assert.equal((await s.control('clip', { on: false, at: 1300, source: 'other', text: 'ignored when off' })).status, 200);
+  for (const bad of [{ on: 'yes', at: 1, text: 'Yes.' }, { on: true, text: 'Yes.' }, { on: true, at: -1, text: 'Yes.' }, { on: true, at: 1, source: 'tab', text: 'Yes.' },
+    { on: true, at: 1 }, { on: true, at: 1, text: 7 }, { on: true, at: 1, text: 'x'.repeat(601) }]) assert.equal((await s.control('clip', bad)).status, 400, JSON.stringify(bad));
+  for (const old of [{ on: true, at: 1 }, { on: false, at: 2 }]) assert.equal((await s.control('gate', old)).status, 400, 'gate is refused: ' + JSON.stringify(old));
+  assert.deepEqual(ear('clip').map(r => [r.on, r.source, r.text, r.pageAt]), [[true, 'page', "Yes, I'm tired.", 1234.5], [false, 'other', undefined, 1300]]);
+  assert.equal(s.events('ear').length, 1, 'a clip never pauses the ear');
   // A hold pauses it; the final resumes it; the switch turns it off.
   s.generation = (await (await s.control('ask', { context: [] })).json()).generation;
   await s.frames(1);
@@ -484,9 +486,9 @@ test('ear records: each turn and seal with what the wake rule found, pause and r
   assert.equal((await s.control('window', { ear: false })).status, 200);
   assert.deepEqual(ear('off').map(r => r.reason), ['off']);
   const before = records.length;
-  assert.equal((await s.control('gate', { on: true, at: 2000 })).status, 200);
-  assert.equal(records.length, before, 'no ear, no gate line');
-  assert.ok(records.every(r => Object.keys(r).every(key => ['event', 'at', 'earId', 'tier', 'text', 'wake', 'question', 'reason', 'replayedMs', 'on', 'source', 'pageAt'].includes(key))));
+  assert.equal((await s.control('clip', { on: true, at: 2000, text: 'No.' })).status, 200);
+  assert.equal(records.length, before, 'no ear, no clip line');
+  assert.ok(records.every(r => Object.keys(r).every(key => ['event', 'at', 'earId', 'tier', 'text', 'wake', 'question', 'reason', 'replayedMs', 'on', 'source', 'pageAt', 'heard', 'clip', 'kept'].includes(key))));
 });
 
 test('ear records: a bare name is found as a name; a lost socket is recorded and the ear is off; a broken writer never touches the ear', async t => {
@@ -507,4 +509,94 @@ test('ear records: a bare name is found as a name; a lost socket is recorded and
 test('server.js sends the ear\'s lines to the chat-turns writer', async () => {
   const source = await fs.readFile(new URL('../server.js', import.meta.url), 'utf8');
   assert.match(source, /onEar: \(record\) => chatTurns\.ear\(record\)/);
+});
+
+// ---- Her clip is handled, never silenced (spec 2026-10-28 §13, plan H2) ----
+// The page posts each clip's words (`control {type:'clip'}`); the hub removes
+// them from every transcript turn heard while the clip plays or within 3 s
+// after: a turn left with no words seals nothing; the partner's words left go on.
+const READING = 'Ellie, your options are Yes. No.';
+test('main tier: the reading heard back is dropped (no turn, no seal, no wake); the partner\'s words beside her clip seal as the question', async t => {
+  const service = await turnsService(t, { 2: [ENDED('Ellie, your options are Yes. No.')], 4: [ENDED("Ellie are you hungry yes I'm tired", 1)] });
+  const records = [], ear = earOf(records);
+  const h = await hub(t, { service, extra: { onEar: record => { records.push(record); } } });
+  const s = await h.session();
+  await s.open({ ear: true });
+  assert.equal((await s.control('clip', { on: true, at: 10, text: READING })).status, 200);
+  await s.frames(2);
+  await until(() => ear('echo').length === 1);
+  assert.equal((await s.control('clip', { on: false, at: 20 })).status, 200);
+  assert.equal((await s.control('clip', { on: true, at: 30, text: "Yes, I'm tired." })).status, 200);
+  await s.frames(2);
+  await until(() => s.events('utterance-sealed').length === 1);
+  assert.deepEqual(s.events('utterance-sealed').map(e => e.text), ['are you hungry']);
+  assert.deepEqual(ear('turn').map(r => r.text), ['Ellie are you hungry'], 'the dropped turn is no turn');
+  assert.deepEqual(ear('seal').map(r => [r.text, r.wake]), [['Ellie are you hungry', 'question']]);
+  assert.deepEqual(ear('echo').map(r => [r.tier, r.heard, r.kept]), [['main', READING, 'dropped'], ['main', "Ellie are you hungry yes I'm tired", 'Ellie are you hungry']]);
+  assert.equal(ear('echo')[1].clip, "yes I'm tired");
+  assert.deepEqual(ear('clip').map(r => [r.on, r.text]), [[true, READING], [false, undefined], [true, "Yes, I'm tired."]]);
+});
+
+test('a turn 5 s after her clip ended passes untouched', async t => {
+  let now = 1000000;
+  const service = await turnsService(t, { 2: [ENDED('Ellie, your options are yes')] });
+  const records = [], ear = earOf(records);
+  const h = await hub(t, { service, clock: () => now, extra: { onEar: record => { records.push(record); } } });
+  const s = await h.session();
+  await s.open({ ear: true });
+  await s.control('clip', { on: true, at: 1, text: READING });
+  now += 1000; await s.control('clip', { on: false, at: 2 });
+  now += 5000;
+  await s.frames(2);
+  await until(() => s.events('utterance-sealed').length === 1);
+  assert.equal(s.events('utterance-sealed')[0].text, 'your options are yes');
+  assert.equal(ear('echo').length, 0);
+});
+
+test('a held question: her clip\'s words leave the partials and the final; nothing of the ear is recorded with the ear off', async t => {
+  const service = await turnsService(t, { 1: [turn("Yes, I'm tired")], 2: [turn("do you want juice yes I'm tired")] },
+    { onTerminate: [ENDED("Do you want juice? Yes, I'm tired.")] });
+  const records = [];
+  const h = await hub(t, { service, extra: { onEar: record => { records.push(record); } } });
+  const s = await h.session();
+  assert.equal((await s.control('clip', { on: true, at: 5, text: "Yes, I'm tired." })).status, 200);
+  s.generation = (await (await s.control('ask', { context: [] })).json()).generation;
+  await s.frames(2);
+  await until(() => service.connections.some(c => c.frames >= 2));
+  await pause(50);
+  assert.equal((await s.control('finish', { seq: s.sent() })).status, 200);
+  await until(() => s.events('final').length === 1);
+  assert.equal(s.events('partial')[0].text, 'do you want juice', 'her words alone are no partial');
+  assert.ok(s.events('partial').every(e => !/tired/i.test(e.text)), 'no partial holds her words');
+  assert.equal(s.events('final')[0].text, 'Do you want juice?');
+  assert.deepEqual(records, [], 'no ear: no clip or echo lines');
+});
+
+test('a held question that was only her clip is no speech', async t => {
+  const service = await turnsService(t, {}, { onTerminate: [ENDED('No.')] });
+  const h = await hub(t, { service });
+  const s = await h.session();
+  await s.control('clip', { on: true, at: 5, text: 'No.' });
+  s.generation = (await (await s.control('ask', { context: [] })).json()).generation;
+  await s.frames(2);
+  await until(() => service.connections.some(c => c.frames >= 2));
+  assert.equal((await s.control('finish', { seq: s.sent() })).status, 200);
+  await until(() => s.events('error').length === 1);
+  assert.equal(s.events('error')[0].error, 'no-speech');
+  assert.equal(s.events('final').length, 0);
+});
+
+test('a button window: her clip heard back seals nothing; the partner\'s next words seal', async t => {
+  const service = await turnsService(t, { 2: [turn("Yes, I'm")], 3: [ENDED("Yes, I'm tired.")], 30: [ENDED('do you want a nap', 1)] });
+  const h = await hub(t, { service });
+  const s = await h.session();
+  await s.control('clip', { on: true, at: 5, text: "Yes, I'm tired." });
+  await s.open({ context: [] });
+  await s.frames(3);
+  await until(() => service.connections.some(c => c.frames >= 3));
+  await s.frames(25, QUIET);
+  assert.equal(s.events('utterance-sealed').length, 0, 'the echo never seals, on its turn end or on quiet frames');
+  await s.frames(2);
+  await until(() => s.events('utterance-sealed').length === 1);
+  assert.equal(s.events('utterance-sealed')[0].text, 'do you want a nap');
 });

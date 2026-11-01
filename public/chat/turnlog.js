@@ -187,6 +187,7 @@ export function createTurnLog(options = {}) {
       if (['questions', 'comments', 'about'].includes(patch.page)) turn.content.page = patch.page;
       if (patch.again === true) turn.content.again = true;
       if (patch.prompted === true) turn.content.prompted = true; // the options were read aloud (§6)
+      if (Number.isSafeInteger(patch.readings) && patch.readings >= 1 && patch.readings <= 3) turn.content.readings = patch.readings; // how many times (§6)
       if (patch.back === true) turn.content.back = true; // Back was used (maintainer 10/29)
       if (patch.wake === true) turn.content.wake = true; // a wake-word question (§8)
       if (patch.answered === true) turn.content.answered = true; // Yes/No in full were on screen when she chose (§11)

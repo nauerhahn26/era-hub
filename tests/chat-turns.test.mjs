@@ -432,12 +432,13 @@ test('her lists (stable frame §2): questions, comments and about, generic defau
 test('a turn record keeps the stable frame fields (§4): the mode she swapped to, the page she opened, Something else', () => {
   const base = turnRecord().content;
   for (const extra of [{ mode: 'ask' }, { mode: 'comment' }, { page: 'questions' }, { page: 'comments' }, { page: 'about' }, { again: true },
-    { mode: 'ask', page: 'about', again: true }, { prompted: true }, { back: true }, { wake: true }, { answered: true }]) {
+    { mode: 'ask', page: 'about', again: true }, { prompted: true }, { prompted: true, readings: 3 }, { back: true }, { wake: true }, { answered: true }]) {
     const kept = validateTurn(turnRecord({ content: { ...base, ...extra } }));
     assert.deepEqual(kept.content, { ...base, ...extra }, JSON.stringify(extra));
   }
   for (const extra of [{ mode: 'tell' }, { mode: 'one-shot' }, { mode: null }, { page: 'likes' }, { page: 7 }, { again: false }, { again: 'yes' }, { again: 1 },
-    { prompted: false }, { prompted: 'yes' }, { prompted: 1 }, { back: false }, { back: 'yes' }, { back: 1 }, { wake: false }, { wake: 'yes' }, { answered: false }, { answered: 'yes' }])
+    { prompted: false }, { prompted: 'yes' }, { prompted: 1 }, { back: false }, { back: 'yes' }, { back: 1 }, { wake: false }, { wake: 'yes' }, { answered: false }, { answered: 'yes' },
+    { readings: 0 }, { readings: 4 }, { readings: 1.5 }, { readings: '2' }])
     assert.throws(() => validateTurn(turnRecord({ content: { ...base, ...extra } })), e => e.status === 400 && e.code === 'invalid-turn', JSON.stringify(extra));
 });
 
@@ -513,14 +514,19 @@ test('ear records: appended to the day file only while test mode is on, strict f
   assert.equal(heard.at, new Date(at).toISOString()); assert.equal(heard.day, '2026-10-31'); assert.equal(heard.device, 'test-device');
   for (const value of [{ event: 'tier', at, tier: 'main', replayedMs: 1500 }, { event: 'seal', at, text: 'Ellie, are you hungry', wake: 'question', question: 'are you hungry' },
     { event: 'pause', at, reason: 'hold' }, { event: 'resume', at, reason: 'final' }, { event: 'off', at, reason: 'idle' }, { event: 'socket', at, reason: 'closed' },
-    { event: 'gate', at, on: true, source: 'page', pageAt: 1234.5 }, { event: 'gate', at, on: false, source: 'other' }])
+    { event: 'clip', at, on: true, source: 'page', text: "Yes, I'm tired.", pageAt: 1234.5 }, { event: 'clip', at, on: false, source: 'other' },
+    { event: 'echo', at, tier: 'ear', heard: "Ellie are you hungry yes I'm tired", clip: "yes I'm tired", kept: 'Ellie are you hungry' }])
     assert.ok(await s.turns.ear(value), JSON.stringify(value));
-  for (const bad of [{ event: 'turn', at, secret: 1 }, { event: 'nope', at }, { event: 'turn' }, { event: 'tier', at, tier: 'cheap' }, { event: 'gate', at, on: 'yes' },
+  for (const bad of [{ event: 'turn', at, secret: 1 }, { event: 'nope', at }, { event: 'turn' }, { event: 'tier', at, tier: 'cheap' }, { event: 'clip', at, on: 'yes' },
+    { event: 'gate', at, on: true, source: 'page' }, { event: 'echo', at, kept: 7 },
     { event: 'seal', at, wake: 'maybe' }, { event: 'off', at, reason: 'Bad Reason!' }, { event: 'tier', at, replayedMs: 20000 }, null, 'turn'])
     assert.equal(await s.turns.ear(bad), null, JSON.stringify(bad));
   const written = await lines();
-  assert.equal(written.length, 9); assert.ok(written.every(line => line.kind === 'ear' && !('id' in line) && !('audio' in line)));
-  assert.deepEqual(written.map(line => line.event), ['turn', 'tier', 'seal', 'pause', 'resume', 'off', 'socket', 'gate', 'gate']);
+  assert.equal(written.length, 10); assert.ok(written.every(line => line.kind === 'ear' && !('id' in line) && !('audio' in line)));
+  assert.deepEqual(written.map(line => line.event), ['turn', 'tier', 'seal', 'pause', 'resume', 'off', 'socket', 'clip', 'clip', 'echo']);
+  const echo = written.at(-1);
+  assert.deepEqual([echo.heard, echo.clip, echo.kept], ["Ellie are you hungry yes I'm tired", "yes I'm tired", 'Ellie are you hungry']);
+  assert.ok((await s.turns.ear({ event: 'echo', at, heard: 'a\u0007b ' + 'y'.repeat(400) })).heard.length === 300, 'echo words capped, control characters gone');
   // A turn record beside them: the list and the summary hold turns only.
   assert.equal((await s.post(turnRecord())).status, 201);
   const listed = await (await fetch(s.base + '/turns')).json();

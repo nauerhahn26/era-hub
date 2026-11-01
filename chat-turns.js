@@ -76,6 +76,8 @@ const RECORD = shape({
     mode: oneOf(['ask', 'comment']), page: oneOf(['questions', 'comments', 'about']), again: v => v === true,
     // The options were read aloud after a silence (§6).
     prompted: v => v === true, back: v => v === true,
+    // How many readings of the batch started (§6, amended 10/31 night: up to three).
+    readings: v => Number.isSafeInteger(v) && v >= 1 && v <= 3,
     // A question heard by the wake word (§8).
     wake: v => v === true,
     // Yes and No in full were on screen when she chose (stable frame §11).
@@ -90,14 +92,17 @@ const RECORD = shape({
 // What the ear heard (stable frame spec 2026-10-28 §12): one line per ear
 // event, beside the turn records in the day's log. No id (the turn tools skip
 // it), no audio, the words capped at 300 characters.
-const EAR_EVENTS = ['turn', 'tier', 'seal', 'pause', 'resume', 'off', 'socket', 'gate'];
+const EAR_EVENTS = ['turn', 'tier', 'seal', 'pause', 'resume', 'off', 'socket', 'clip', 'echo'];
 const EAR = shape({ event: oneOf(EAR_EVENTS), at: num(Number.MAX_SAFE_INTEGER), earId: str(32, /^[0-9a-f]+$/), tier: oneOf(['ear', 'main']),
   text: str(300), wake: oneOf(['question', 'name', 'none']), question: str(300), reason: str(32, /^[a-z][a-z-]*$/), replayedMs: int(10000),
-  on: v => typeof v === 'boolean', source: oneOf(['page', 'other']), pageAt: num(Number.MAX_SAFE_INTEGER) }, ['event', 'at']);
+  on: v => typeof v === 'boolean', source: oneOf(['page', 'other']), pageAt: num(Number.MAX_SAFE_INTEGER),
+  // Her clip is handled (§13): what an echo turn was, the runs of her clip it matched, what was kept ('dropped': nothing).
+  heard: str(300), clip: str(300), kept: str(300) }, ['event', 'at']);
 const earWords = v => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 300) : v);
 function validateEar(value) {
   if (!isObject(value)) return null;
-  const record = { ...value, ...('text' in value ? { text: earWords(value.text) } : {}), ...('question' in value ? { question: earWords(value.question) } : {}) };
+  const record = { ...value };
+  for (const key of ['text', 'question', 'heard', 'clip', 'kept']) if (key in value) record[key] = earWords(value[key]);
   return EAR(record) ? record : null;
 }
 
