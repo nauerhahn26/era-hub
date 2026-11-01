@@ -698,6 +698,6 @@ Cause of the morning's lost replies: the reply service account had no credit
       idle on the first tick after (clock jump test, 12 h); the switch saved
       off; the page's gentle line. If the code already does this, pin it and
       find why 11/1 wrote no `off (idle)` (page reopening the ear at wake?).
-- [ ] F3 page: question strip dwell/click re-renders the replies (spec §15):
+- [x] F3 page: question strip dwell/click re-renders the replies (spec §15):
       Back's memory or the local set; a failed job is retried once per look;
       the reading re-arms. Tests first in chat-frame/chat-browser.

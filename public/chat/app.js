@@ -318,6 +318,9 @@ const controller = createChatController({
   onChoicesError: error => {
     const code = typeof error?.code === 'string' && /^[a-z][a-z0-9-]{0,39}$/.test(error.code) ? error.code : null;
     if (code) turnLog.content(questionMetric, { choicesError: code });
+    const state = controller.state;
+    // The strip asks again on the next look (§15).
+    failedAsk = state.question ? { turn: state.turn, question: state.question, wake: wakeMetric !== null && wakeMetric === questionMetric } : null;
     metrics.end(questionMetric, 'failed', 'choices');
   },
   stopSpeech: () => { reader?.cancel(); currentSpeech++; metrics.end(speechMetric, 'cancelled', 'interrupted'); speechMetric = null; voice.stop(); },
@@ -396,7 +399,7 @@ reader = createOptionsReader({ delayMs: () => promptMs, name: () => herName,
 function armReading(state) {
   if (state.phase !== 'Your turn' || !state.choices.length || page || modeView || holdActive() || windowOpen() || $('partnerDialog').open) return;
   // Each label is read as it is on screen when the reading reaches it (§11: the answers in full).
-  void reader.armed({ id: state.choices.map(choice => choice.id).join(','), items: state.choices.map(choice => ({ id: choice.id, get label() { return shownReply(choice).label; } })) });
+  void reader.armed({ id: `${state.choices.map(choice => choice.id).join(',')}#${armEpoch}`, items: state.choices.map(choice => ({ id: choice.id, get label() { return shownReply(choice).label; } })) });
 }
 // A selection on a tile stops the reading at once; a glance (dwell progress)
 // never does (spec 2026-10-28 §6, amended 10/31 night: "it should keep giving
@@ -618,9 +621,38 @@ function stripTile(state) {
   if (capturing(state)) return tile(state.partial || '', 'question live', null, area, '', { noPicture: true });
   if (state.question) {
     const question = state.question;
-    return tile(question, 'question', () => { echoing = true; void controller.sayFixed(question, { echo: true }); }, area, '', { noPicture: true });
+    return tile(question, 'question', () => lookAtQuestion(question), area, '', { noPicture: true });
   }
   return tile('Ask me something', 'question empty', null, area, '', { noPicture: true });
+}
+// ---- the question re-renders its replies (spec 2026-10-28 §15) ----
+// A look at the strip (a dwell) or the partner's touch repeats the question
+// and, when a page or a mode she opened stands in the middle, brings this
+// question's replies back (the controller still holds them: nothing is asked
+// again, the made sets stay made). A question whose replies never arrived
+// (§14) is asked again, once per look. The reading (§6) re-arms when the
+// replies come back: `armEpoch` makes the batch new to the reader.
+let failedAsk = null, armEpoch = 0, wakeMetric = null;
+function lookAtQuestion(question) {
+  const state = controller.state;
+  if (state.question === question && state.choices.length && !state.stale && (page || modeView)) {
+    reader.cancel(); page = null; pageOffset = 0; modeView = null; armEpoch++;
+    gridKey = ''; renderGrid(state);
+  } else if (state.question === question && !state.choices.length && !waitingForReplies(state) && failedAsk?.turn === state.turn && failedAsk.question === question) askAgain(failedAsk);
+  // After the replies are back: speaking first would be stopped by a new preparation.
+  echoing = true; void controller.sayFixed(question, { echo: true });
+}
+// The same question by the plain request path (typed questions use it too); a test-mode record of its own.
+function askAgain(failed) {
+  failedAsk = null;
+  metrics.end(questionMetric, 'cancelled', 'superseded');
+  questionMetric = {};
+  turnLog.begin(questionMetric, 'press', { mode: failed.wake ? 'wake' : 'none', session });
+  turnLog.content(questionMetric, { transcript: failed.question, retried: true, ...(failed.wake ? { wake: true } : {}) });
+  // The question is in the conversation once.
+  recentConversation = recentConversation.filter(line => line !== `Partner: ${failed.question}`.slice(0, 500));
+  dropStaging(); dropMade(); page = null; pageOffset = 0; modeView = null; armEpoch++;
+  controller.prepare(failed.question);
 }
 // The live partial changes the strip's words in place; nothing else redraws.
 function paintStrip(state) {
@@ -1323,7 +1355,7 @@ function earSealed(data) {
   reader?.cancel(); dropStaging();
   metrics.end(questionMetric, 'cancelled', 'superseded');
   // Test mode only (kind press, mode wake): ear turns never enter the production rows.
-  questionMetric = {};
+  questionMetric = {}; wakeMetric = questionMetric;
   turnLog.begin(questionMetric, 'press', { mode: 'wake', session });
   turnLog.content(questionMetric, { transcript: question, wake: true });
   turnLog.mark(questionMetric, 'utteranceSealed', { text: String(data.text || '').slice(0, 2000) });

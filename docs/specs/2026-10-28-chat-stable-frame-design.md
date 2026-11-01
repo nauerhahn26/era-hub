@@ -337,6 +337,13 @@ to make a comment, but then wanted to actually answer your question."
 - A question whose replies never arrived (a failed job, §14) is asked of the
   model again by the same look or touch, once per look.
 - The read-aloud timer (§6) re-arms when the replies come back.
+- Built 11/1: a page or a mode never changes the controller's batch, so the
+  replies brought back are the ones the controller holds (for a yes-or-no
+  question, the local set it was sealed with); the made sets stay made. A
+  failed question is asked again by the plain request path (`POST /choices`,
+  as a typed question), recorded in test mode as its own turn with
+  `content.retried`. With the replies showing a look only repeats the
+  question, and that repeat still stops a reading in progress as before.
 
 ## 10 (addendum, 11/1 morning): the ear across a sleep
 
