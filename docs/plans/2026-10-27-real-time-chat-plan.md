@@ -672,11 +672,11 @@ Dad: "you cannot silence the mic when she talks. You have to handle it."
       `clip`); every turn-end/final/settled/partial on ear, main, window and
       hold paths goes through the book; dropped turns seal nothing; `echo`
       ear records; `EAR_EVENTS` + whitelist in chat-turns.
-- [ ] H3 page: `sendFrame` never substitutes silence; `audioStarted/Ended`
+- [x] H3 page: `sendFrame` never substitutes silence; `audioStarted/Ended`
       carry the clip's text (voice.say's text, the reading's text, the device
       voice's text); broadcast carries text; `clip` control; diagnostics box
       shows clip/echo lines; the old gate tests flip to "frames keep flowing".
-- [ ] H4 registry regenerated if launch counts change; spec §9 amended (done).
+- [x] H4 registry regenerated if launch counts change; spec §9 amended (done).
 - [ ] R1 reading aloud keeps going (spec §6 amended 10/31 night): dwell
       progress (`.dwell-active`) no longer cancels the timer or the reading;
       selection, swap, hold, Clear, Back, partner dialog still do; after a

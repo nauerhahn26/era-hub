@@ -401,7 +401,7 @@ test('her pick while the window listens speaks the tile and touches nothing of c
   assert.deepEqual(f.errors, []);
 });
 
-test('a selection during an open press window seals no utterance and brings no replacement batch: her clip goes out as silence (maintainer 10/29)', { timeout: 60000 }, async t => {
+test('a selection during an open press window seals no utterance and brings no replacement batch: her clip is heard, its words go to the hub (maintainer 10/29, §13)', { timeout: 60000 }, async t => {
   const f = await fixture(t, { script: { 4: [turn('do you want chicken or fish', { end: true })] }, limits: { windowSilenceMs: 6000 } });
   await f.load();
   await f.until(() => f.api.commands.state().connected);

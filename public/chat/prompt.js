@@ -3,12 +3,14 @@
 // the reader says "<name>, your options are", then each reply label in spoken
 // order, each tile lit while its clip plays. Any dwell progress, selection,
 // page or mode swap, hold or partner dialog cancels it at once. A batch is
-// read at most once; a delay of 0 is off.
+// read at most once; a delay of 0 is off. onStart(text) gets the reading's
+// whole spoken text and onEnd() follows its end or cancel (spec §13: the page
+// tells the hub the reading's words as one clip).
 export const PROMPT_GAP_MS = 350;
 
 const value = v => (typeof v === 'function' ? v() : v);
 
-export function createOptionsReader({ delayMs = 0, name = '', speak, light = () => {}, unlight = () => {}, onStart = () => {},
+export function createOptionsReader({ delayMs = 0, name = '', speak, light = () => {}, unlight = () => {}, onStart = () => {}, onEnd = () => {},
   gapMs = PROMPT_GAP_MS, setTimeout: later = globalThis.setTimeout, clearTimeout: clear = globalThis.clearTimeout } = {}) {
   let seen = null, run = null;
   const safe = fn => { try { fn(); } catch { /* lighting never breaks the reading */ } };
@@ -18,6 +20,7 @@ export function createOptionsReader({ delayMs = 0, name = '', speak, light = () 
     if (!current || current.done) return;
     current.done = true; clear(current.timer); current.abort.abort();
     if (current.lit) { const item = current.lit; current.lit = null; safe(() => unlight(item)); }
+    if (current.started) safe(onEnd);
     if (run === current) run = null;
     current.resolve(result);
   }
@@ -31,9 +34,10 @@ export function createOptionsReader({ delayMs = 0, name = '', speak, light = () 
     try { await speak(text, current.abort.signal); } catch { /* a clip that fails moves on */ }
   }
   async function read(current, items) {
-    try { onStart(); } catch { /* telemetry never blocks */ }
-    const who = String(value(name) || '').trim();
-    await say(current, who ? `${who}, your options are` : 'Your options are');
+    const who = String(value(name) || '').trim(), intro = who ? `${who}, your options are` : 'Your options are';
+    current.started = true;
+    try { onStart([intro, ...items.map(item => item.label)].join(', ')); } catch { /* telemetry never blocks */ }
+    await say(current, intro);
     let n = 0;
     for (const [i, item] of items.entries()) {
       if (current.done) return;

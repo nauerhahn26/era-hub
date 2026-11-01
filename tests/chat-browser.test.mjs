@@ -559,7 +559,7 @@ test('Listen for <name>: the switch streams room audio as an ear, a wake utteran
     else if (url.pathname.endsWith('/sessions') && req.method() === 'POST') result = { id: 'wake-session' };
     else if (url.pathname.endsWith('/control')) {
       const body = req.postDataJSON(); controls.push(body);
-      result = body.type === 'window' && body.ear === true ? { ok: true, generation: EAR, earId: 'ear-1' } : body.type === 'window' ? { ok: true, generation }
+      result = body.type === 'clip' ? { ok: true } : body.type === 'window' && body.ear === true ? { ok: true, generation: EAR, earId: 'ear-1' } : body.type === 'window' ? { ok: true, generation }
         : body.type === 'finish' ? { generation } : body.type === 'cancel' ? { ok: true, generation: EAR } : { generation: ++generation };
     } else if (url.pathname.endsWith('/choices')) result = { kind: 'alternatives', choices: [{ label: 'Music', say: 'Music' }, { label: 'A story', say: 'A story' }] };
     else result = {};
@@ -605,18 +605,19 @@ test('Listen for <name>: the switch streams room audio as an ear, a wake utteran
   await emit({ type: 'batch-sealed', generation: EAR, windowId: 'w-1', seq: 1, kind: 'generated', choices: [{ label: 'Music', say: 'Music' }, { label: 'A story', say: 'A story' }] });
   await page.waitForSelector('#grid .response');
   assert.equal(await page.locator('#grid .tile.question .label').textContent(), 'music or a story?');
-  // Her clip is never heard: silence in its place while it plays and for 150 ms
-  // after, and her pick touches nothing of capture (maintainer 10/29).
+  // Her clip is handled at the hub, never silenced (spec 2026-10-28 §13): the
+  // frames keep their sound while it plays, the hub is told its words at its
+  // start and its end, and her pick touches nothing of capture (maintainer 10/29).
   const controlsAtPick = controls.length;
   await page.locator('#grid .response', { hasText: 'Music' }).click();
   await page.waitForFunction(() => window.__clips.length && window.__clips.at(-1).end, null, { timeout: 5000 });
-  await page.waitForTimeout(900);
-  const gate = await page.evaluate(ear => { const clip = window.__clips.at(-1); const ears = window.__frames.filter(frame => frame.gen === ear);
-    const during = ears.filter(frame => frame.at > clip.start && frame.at < clip.end + 130);
-    return { during: during.length, loud: during.filter(frame => !frame.silent).length, after: ears.filter(frame => frame.at > clip.end + 200 && !frame.silent).length }; }, EAR);
-  assert.ok(gate.during > 0, 'the stream stays continuous while her clip plays');
-  assert.equal(gate.loud, 0, 'only silence while her clip plays and within 150 ms of its end');
-  assert.ok(gate.after > 0, 'the room is heard again after the gap');
+  await page.waitForTimeout(300);
+  const heard = await page.evaluate(ear => { const clip = window.__clips.at(-1); const during = window.__frames.filter(frame => frame.gen === ear && frame.at > clip.start && frame.at < clip.end);
+    return { during: during.length, loud: during.filter(frame => !frame.silent).length }; }, EAR);
+  assert.ok(heard.during > 0 && heard.loud > 0, `the microphone is never silenced while her clip plays: ${JSON.stringify(heard)}`);
+  const clipped = controls.slice(controlsAtPick).filter(body => body.type === 'clip');
+  assert.deepEqual(clipped.map(body => [body.on, body.text, body.source]), [[true, 'Music', undefined], [false, undefined, undefined]], 'her clip\'s words at its start, then its end');
+  assert.ok(clipped.every(body => Number.isFinite(body.at)) && clipped[1].at >= clipped[0].at);
   assert.deepEqual(controls.slice(controlsAtPick).filter(body => ['cancel', 'pick'].includes(body.type)), [], 'her pick sends no cancel and no pick');
   const refresh = controls.filter(body => body.type === 'window' && body.ear === true).at(-1);
   assert.ok(controls.filter(body => body.type === 'window' && body.ear === true).length >= 2 && refresh.context.includes('Me: Music'), 'after her pick the ear gets the conversation so far');
@@ -717,7 +718,7 @@ async function earFixture(t, settings = {}) {
   return { context, controls, errors, EAR, open, emit, heard };
 }
 
-test('the read-aloud is never heard by the ear: only silence goes out while the name and each option play', { timeout: 90000 }, async t => {
+test('the read-aloud is heard, never silenced: the frames keep their sound and the hub gets the whole reading as one clip, then each spoken piece', { timeout: 90000 }, async t => {
   const f = await earFixture(t, { chatPromptMs: 800 });
   const page = await f.open();
   await f.emit(page, { type: 'utterance-sealed', ear: true, earId: 'ear-1', windowId: 'w-1', seq: 1, text: 'music or a story?', windowText: 'music or a story?', generation: f.EAR });
@@ -728,15 +729,18 @@ test('the read-aloud is never heard by the ear: only silence goes out while the 
   const clips = await page.evaluate(() => window.__clips);
   assert.equal(clips.length, 3, 'the name, then each option');
   for (const clip of clips) {
-    const during = await f.heard(page, clip.start, clip.end + 130);
-    assert.ok(during.frames > 0 && during.loud === 0, `only silence while the read-aloud plays: ${JSON.stringify(during)}`);
+    const during = await f.heard(page, clip.start, clip.end);
+    assert.ok(during.frames > 0 && during.loud > 0, `the microphone is never silenced while the read-aloud plays: ${JSON.stringify(during)}`);
   }
-  assert.ok((await f.heard(page, clips.at(-1).end + 600, Date.now() + 1000)).loud > 0, 'the room is heard again after the reading');
+  const clipped = f.controls.filter(body => body.type === 'clip');
+  assert.deepEqual(clipped.map(body => [body.on, body.text]), [[true, 'Ellie, your options are, Music, A story'],
+    [true, 'Ellie, your options are'], [false, undefined], [true, 'Music'], [false, undefined], [true, 'A story'], [false, undefined], [false, undefined]],
+    'the reading\'s whole text first (its gaps never end it), each piece inside it');
   assert.deepEqual(f.controls.filter(body => ['cancel', 'pick'].includes(body.type)), [], 'the reading touches nothing of capture');
   assert.deepEqual(f.errors, []);
 });
 
-test('a device voice whose end event comes early is still never heard: the ear sends silence while the device is speaking', { timeout: 90000 }, async t => {
+test('the device voice is heard, never silenced: its words go to the hub as a clip', { timeout: 90000 }, async t => {
   const f = await earFixture(t);
   // A device voice that reports its end at once but keeps speaking for a second (the kiosk's voices can).
   await f.context.addInitScript(() => {
@@ -754,12 +758,14 @@ test('a device voice whose end event comes early is still never heard: the ear s
   await page.waitForFunction(() => window.__synth?.end, null, { timeout: 5000 });
   await page.waitForTimeout(500);
   const synth = await page.evaluate(() => window.__synth);
-  const during = await f.heard(page, synth.start, synth.end + 100);
-  assert.ok(during.frames > 0 && during.loud === 0, `only silence while the device voice speaks: ${JSON.stringify(during)}`);
+  const during = await f.heard(page, synth.start, synth.end);
+  assert.ok(during.frames > 0 && during.loud > 0, `the microphone is never silenced while the device voice speaks: ${JSON.stringify(during)}`);
+  const clipped = f.controls.filter(body => body.type === 'clip');
+  assert.deepEqual(clipped.map(body => [body.on, body.text]), [[true, 'Hi!'], [false, undefined]]);
   assert.deepEqual(f.errors, []);
 });
 
-test('another Chat page speaking is never heard either: the ear sends silence while any Chat page plays her voice', { timeout: 90000 }, async t => {
+test('another Chat page speaking: its words reach this page on the channel and go to the hub as an other clip; the microphone stays open', { timeout: 90000 }, async t => {
   const f = await earFixture(t);
   const ear = await f.open();
   const other = await f.open({ ear: false });
@@ -767,8 +773,10 @@ test('another Chat page speaking is never heard either: the ear sends silence wh
   await other.waitForFunction(() => window.__clips.length && window.__clips.at(-1).end, null, { timeout: 5000 });
   await ear.waitForTimeout(500);
   const clip = await other.evaluate(() => window.__clips.at(-1));
-  const during = await f.heard(ear, clip.start, clip.end + 130);
-  assert.ok(during.frames > 0 && during.loud === 0, `only silence while another Chat page speaks: ${JSON.stringify(during)}`);
+  const during = await f.heard(ear, clip.start, clip.end);
+  assert.ok(during.frames > 0 && during.loud > 0, `the microphone is never silenced while another Chat page speaks: ${JSON.stringify(during)}`);
+  const others = f.controls.filter(body => body.type === 'clip' && body.source === 'other');
+  assert.deepEqual(others.map(body => [body.on, body.text]), [[true, 'Hi!'], [false, undefined]], 'the other page\'s words, once, from the ear page');
   assert.deepEqual(f.errors, []);
 });
 
@@ -965,31 +973,36 @@ test('Yes and No in full (spec 2026-10-28 §11): the phrases land in place with 
   assert.deepEqual(f.errors, []);
 });
 
-test('what the ear heard (spec 2026-10-28 §12): her clips are gate periods sent to the hub while the ear listens, read-aloud gaps merged; the diagnostics box shows the last twelve ear lines', { timeout: 90000 }, async t => {
+test('what the ear heard (spec 2026-10-28 §12-§13): every clip start (with its words) and end goes to the hub; the diagnostics box shows the page\'s clips and the last twelve ear lines', { timeout: 90000 }, async t => {
   const f = await earFixture(t);
   const page = await f.open();
-  const gates = () => f.controls.filter(body => body.type === 'gate');
+  const gates = () => f.controls.filter(body => body.type === 'clip');
   await f.emit(page, { type: 'utterance-sealed', ear: true, earId: 'ear-1', windowId: 'w-1', seq: 1, text: 'music or a story?', windowText: 'music or a story?', generation: f.EAR });
   await f.emit(page, { type: 'batch-sealed', generation: f.EAR, windowId: 'w-1', seq: 1, kind: 'generated', choices: [{ label: 'Music', say: 'Music' }, { label: 'A story', say: 'A story' }] });
   await page.waitForSelector('#grid .response');
-  assert.equal(gates().length, 0, 'nothing plays: no gate');
+  assert.equal(gates().length, 0, 'nothing plays: no clip');
   await page.locator('#grid .response', { hasText: 'Music' }).click();
   for (let i = 0; i < 150 && gates().length < 2; i++) await page.waitForTimeout(20);
   const [on, off] = gates();
-  assert.deepEqual([on.on, off.on, on.source, off.source], [true, false, undefined, undefined], 'one period: on at the clip, off after it');
+  assert.deepEqual([on.on, off.on, on.text, off.text, on.source, off.source], [true, false, 'Music', undefined, undefined, undefined], 'on with its words at the clip, off after it');
   assert.ok(Number.isFinite(on.at) && off.at > on.at);
-  // Two clips a moment apart (the reading's gap) are one period.
+  // Two clips a moment apart are two clips: no merge, each with its own words.
   await page.locator('#grid .tile.yes').click();
   await page.waitForTimeout(150);
   await page.locator('#grid .tile.no').click();
-  for (let i = 0; i < 200 && gates().length < 4; i++) await page.waitForTimeout(20);
-  await page.waitForTimeout(800);
-  assert.equal(gates().length, 4, `merged: ${JSON.stringify(gates().map(g => g.on))}`);
-  // Another Chat page's voice is the other gate.
-  await page.evaluate(() => { const channel = new BroadcastChannel('era-chat-audio'); channel.postMessage({ from: 'other-page', playing: true });
-    setTimeout(() => channel.postMessage({ from: 'other-page', playing: false, tailMs: 100 }), 200); });
-  for (let i = 0; i < 150 && gates().length < 6; i++) await page.waitForTimeout(20);
-  assert.deepEqual(gates().slice(4).map(g => [g.on, g.source]), [[true, 'other'], [false, 'other']]);
+  for (let i = 0; i < 200 && gates().filter(g => !g.on).length < 3; i++) await page.waitForTimeout(20);
+  await page.waitForTimeout(300);
+  assert.deepEqual(gates().slice(2).filter(g => g.on).map(g => g.text), ['Yes.', 'No.']);
+  assert.equal(gates().length, 6, JSON.stringify(gates().map(g => g.on)));
+  // Another Chat page's voice: its words on the channel, an other clip; a message without words is no clip.
+  await page.evaluate(() => { const channel = new BroadcastChannel('era-chat-audio'); channel.postMessage({ from: 'other-page', playing: true, text: 'A story' });
+    channel.postMessage({ from: 'old-page', playing: true });
+    setTimeout(() => channel.postMessage({ from: 'other-page', playing: false, text: 'A story' }), 200); });
+  for (let i = 0; i < 150 && gates().length < 8; i++) await page.waitForTimeout(20);
+  await page.waitForTimeout(100);
+  assert.deepEqual(gates().slice(6).map(g => [g.on, g.source, g.text]), [[true, 'other', 'A story'], [false, 'other', undefined]]);
+  const own = (await page.locator('#diagnostics').textContent()).split('\n').filter(line => / ear clip /.test(line));
+  assert.deepEqual(own.map(line => line.replace(/^\d\d:\d\d:\d\d /, '')), ['ear clip Music', 'ear clip Yes.', 'ear clip No.', 'ear clip (another page) A story']);
   // The diagnostics box: the ear's lines, twelve at most, newest last.
   for (let i = 0; i < 14; i++) await f.emit(page, { type: 'ear', state: 'tier', tier: i % 2 ? 'main' : 'ear', earId: 'ear-1', generation: f.EAR });
   const box = await page.locator('#diagnostics').textContent();

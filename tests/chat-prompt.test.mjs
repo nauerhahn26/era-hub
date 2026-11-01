@@ -115,3 +115,25 @@ test('each label is read as it is on screen when the reading reaches it (spec 20
   await c.advance(10000);
   assert.deepEqual(v.log.filter(line => line.startsWith('say:')), ['say:Sam, your options are', "say:Yes, I'm angry", "say:No, I'm not angry", "say:I'm not sure"]);
 });
+
+// Her clip is handled, never silenced (spec 2026-10-28 §13): the page tells the
+// hub the reading's whole text as one clip, from its first word to its end or
+// its cancel, so the gaps between the pieces never end it.
+test('onStart gets the reading\'s whole spoken text; onEnd follows its end or its cancel, once', async () => {
+  const c = clock(), v = voice(c), seen = [];
+  const reader = createOptionsReader({ delayMs: 1000, name: 'Sam', ...v, onStart: text => seen.push(['start', text]), onEnd: () => seen.push(['end']), ...c });
+  const done = reader.armed(batch('1', ['Chicken', 'Fish']));
+  await c.advance(1000);
+  assert.deepEqual(seen, [['start', 'Sam, your options are, Chicken, Fish']]);
+  await c.advance(10000); await done;
+  assert.deepEqual(seen.slice(1), [['end']]);
+  const cancelled = reader.armed(batch('2', ['Juice']));
+  await c.advance(1200); reader.cancel(); await cancelled;
+  assert.deepEqual(seen.slice(2), [['start', 'Sam, your options are, Juice'], ['end']]);
+  const early = reader.armed(batch('3', ['Tea']));
+  await c.advance(500); reader.cancel(); await early;
+  assert.equal(seen.length, 4, 'a cancel before the reading starts is no clip');
+  const nameless = createOptionsReader({ delayMs: 1000, ...v, onStart: text => seen.push(['start', text]), ...c });
+  nameless.armed(batch('4', ['Tea'])); await c.advance(1000);
+  assert.deepEqual(seen.at(-1), ['start', 'Your options are, Tea']);
+});

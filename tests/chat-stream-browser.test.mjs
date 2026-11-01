@@ -614,14 +614,16 @@ test('Listen for Ellie through the real hub: the switch opens the ear, room fram
   // An either-or question: the hub's own alternatives answer it.
   assert.deepEqual(await f.page.locator('#grid .response .label').allTextContents(), ['Music', 'A story']);
   assert.match(await f.page.locator('#grid .tile.question .label').textContent(), /music or a story/i, 'the strip shows the question after her name');
-  // Her pick mid-utterance (maintainer 10/29): no cancel, no pick; the frames keep flowing under the same generation, silence while her clip plays.
+  // Her pick mid-utterance (maintainer 10/29): no cancel, no pick; the frames keep flowing under the same generation,
+  // with their sound while her clip plays (never silenced, §13): the hub is told the clip's words instead.
   const atPick = controls.length, framesAtPick = frames.length, generation = frames.at(-1).gen;
   await f.page.locator('#grid .response', { hasText: 'Music' }).click();
   await f.page.waitForFunction(() => document.querySelector('#grid .tile.question .label')?.textContent.includes('eat'), null, { timeout: 15000 });
   assert.deepEqual(controls.slice(atPick).filter(body => ['cancel', 'pick'].includes(body.type)), [], 'her pick touched nothing of capture');
   const since = frames.slice(framesAtPick);
   assert.ok(since.length >= 10 && since.every(frame => frame.gen === generation), 'the frames kept flowing under the same generation');
-  assert.ok(since.some(frame => frame.silent), 'silence went out while her clip played');
+  assert.ok(since.every(frame => !frame.silent), 'no silence went out while her clip played');
+  assert.deepEqual(controls.slice(atPick).filter(body => body.type === 'clip').slice(0, 2).map(body => [body.on, body.text]), [[true, 'Music'], [false, undefined]], 'her clip\'s words went to the hub');
   assert.ok(f.ttsTexts.includes('Music'), 'her pick was spoken');
   await f.page.waitForSelector('#grid .response >> text=Play outside', { timeout: 15000 });
   assert.deepEqual(await f.page.locator('#grid .response .label').allTextContents(), ['Play outside', 'Read', 'Not sure'], 'the wake question sealed after her pick still reveals');
