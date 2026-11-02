@@ -44,22 +44,25 @@ Branch `feat/clothing-morning-weather`, worktree `era-hub--wt-clothing-morning-w
 
 ### Phase 1 — the number (posture: implementing)
 
-- [ ] T1 `tests/clothing-rank.test.mjs`: `planningTemp(morning, high)` — 52/67 → 62, 55/72 → 66,
+- [x] T1 `tests/clothing-rank.test.mjs`: `planningTemp(morning, high)` — 52/67 → 62, 55/72 → 66,
       60/75 → 70, 65/85 → 78, 45/60 → 55; `null`/`NaN` morning → `high` unchanged; `null` high → null;
       result is an integer. Red on `R.planningTemp is not a function`.
-- [ ] T2 `clothing-rank.js`: `planningTemp` beside `sharesAt`, exported, with the 11/2 quote in its
+      Red: `R.planningTemp is not a function` (4 fails, `# pass 147 / # fail 4`).
+- [x] T2 `clothing-rank.js`: `planningTemp` beside `sharesAt`, exported, with the 11/2 quote in its
       comment and the 9/23 §4 amendment named. Verify: `node --test tests/clothing-rank.test.mjs`.
+      `node --test tests/clothing-rank.test.mjs` → `# pass 151 / # fail 0`. The spec §3 table reproduces exactly (62/66/70/78/55/63 and every share).
 
 ### Phase 2 — the forecast read (posture: implementing)
 
-- [ ] T3 `tests/clothing-weather.test.mjs`: (a) the standard build's tile reads `55° → 67°  cool`,
+- [x] T3 `tests/clothing-weather.test.mjs`: (a) the standard build's tile reads `55° → 67°  cool`,
       `w.t` 63 (re-pin every assertion the preflight names, each with a one-line reason); (b) a
       series with no hour 8 reads `67° warm` and the old label (fallback = today's behaviour); (c)
       `weatherLeaveAt: 10` with window 10-14 reads morning = hour 10 (66) → t 67; (d) window 14-17
       (the 11/1 hot test) plans at 72 and its order assertions hold; (e) the jacket grid
       (`acc_jacket`) is ordered by the MORNING band: with morning 55 (cool) and high 80 (warm/hot),
       the warmest jacket leads. Red first.
-- [ ] T4 `clothing-worker.js`: `leaveHour()` reads `weatherLeaveAt` (integer 0-23, default 8) from
+      Red: 18 of 23 failing before T4 (the no-hour-8 fallback, the cool 0-8 grid and the re-pinned 80 °F deal pass on the old code, as they should). (c) reads 69, not 67: window 10-14 peaks at 70 (hour 13), round(66/3 + 2·70/3) = 69; the clamp itself is pinned separately (leave 11, window 9-12 → hour 9). The 9/29 hot-deal case moved to window 16-17 + leave 16 to keep reading 80 °F (at 72 the sweater is 12 % and is dealt). Added: a flat-day case (morning = high reads as before).
+- [x] T4 `clothing-worker.js`: `leaveHour()` reads `weatherLeaveAt` (integer 0-23, default 8) from
       `app-settings.json` next to `weatherWindow`, clamped to `win.from` when the window starts
       earlier; `readWindow(hourly, day, win, leaveAt)` adds `morning` (the hour's temp or null),
       `high`, `morningBand`, and `t = planningTemp(morning, high)`; the three callers pass the hour;
@@ -67,16 +70,19 @@ Branch `feat/clothing-morning-weather`, worktree `era-hub--wt-clothing-morning-w
       `${morning}° → ${high}°  ${band}` and say *"This morning it is about M degrees, warming to H.
       Dress for BAND."* when `morning` exists, else exactly as today. Comments name dad's 11/2 words.
       Verify: `node --test tests/clothing-weather.test.mjs tests/clothing-rank.test.mjs`.
+      `node --test tests/clothing-weather.test.mjs tests/clothing-rank.test.mjs` → `# pass 187 / # fail 0` (with weather-location: 215/0). Tile arrow only when the morning is a separate hour (leave < window start) AND cooler than the high; otherwise the pre-11/2 tile with the planning °F. weather-location re-pinned once (`/^81°/` → `/→ 81°/`).
 
 ### Phase 3 — the knob (posture: implementing)
 
-- [ ] T5 `tests/settings-ui.test.mjs` + `tests/routes.test.mjs`: POST `{weatherLeaveAt: 7}` round-trips
+- [x] T5 `tests/settings-ui.test.mjs` + `tests/routes.test.mjs`: POST `{weatherLeaveAt: 7}` round-trips
       through GET; `null` clears to the default; `"8"`, 24, -1, 3.5 are ignored; a changed hour deletes
       `.weather-cache.json` and triggers a rebuild (as the window does); the select `#wxLeave` shows
       the stored hour and saving it toasts. Red first.
-- [ ] T6 `server.js` + `public/settings/index.html`: validation beside `weatherWindow`; one select
+      Red: both new cases fail (`# pass 0 / # fail 2`, filtered by name).
+- [x] T6 `server.js` + `public/settings/index.html`: validation beside `weatherWindow`; one select
       "She leaves the house at" under the window row with the hour labels `wxLabel` already makes;
       hint text names why (the morning counts for pants and jackets). Verify:
+      `node --test tests/settings-ui.test.mjs tests/routes.test.mjs` → `# pass 95 / # fail 0`. The row also had to join the weather card in `public/settings/settings-layout.js` (it moves rows by id).
       `node --test tests/settings-ui.test.mjs tests/routes.test.mjs`.
 
 ### Gate: review (phase boundary)
@@ -84,6 +90,7 @@ Branch `feat/clothing-morning-weather`, worktree `era-hub--wt-clothing-morning-w
 - [ ] T7 Overseer review of the diff against spec §3-§4: the rule, the fallback, the clamp, the
       accessory band, the tile, the knob. Focused run:
       `node --test tests/clothing-rank.test.mjs tests/clothing-weather.test.mjs tests/clothing-fit.test.mjs tests/clothing-accessories.test.mjs tests/clothing-variety.test.mjs tests/clothing-diversity.test.mjs tests/settings-ui.test.mjs tests/routes.test.mjs tests/weather-location.test.mjs`
+      Builder's focused run (review left to the overseer): `# pass 406 / # fail 0`.
       all green.
 
 ### Phase 4 — behavioural verification (mandatory)

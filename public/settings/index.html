@@ -217,6 +217,15 @@
       <select id="wxTo" aria-label="Last hour to dress for"></select>
     </div>
     <p class="desc" id="wxHint">Her school hours, for example &mdash; the outfits get sorted for the weather then, not for the afternoon high.</p>
+    <!-- The hour she leaves the house (spec 2026-11-02 §3; dad 11/2: "would
+         you send your 7 y old to school in shorts? A tank top? No."). The
+         morning counts: the outfits lean from it toward the high, and the
+         jackets follow it. Mouse/touch, for a grown-up. -->
+    <div class="row" id="wxLeaveRow" style="margin-top:12px">
+      <span>She leaves the house at</span>
+      <select id="wxLeave" aria-label="The hour she leaves the house"></select>
+    </div>
+    <p class="desc" id="wxLeaveHint">The morning counts &mdash; a cold start means pants and a jacket even when the afternoon warms up.</p>
   </div>
 
   <div class="card" id="ai">
@@ -1948,6 +1957,24 @@ wxFill();
 $("wxFrom").onchange=()=>wxSave(wxRead());
 $("wxTo").onchange=()=>wxSave(wxRead());
 
+// ---- The hour she leaves the house (spec 2026-11-02 §3) ----
+// One select, every hour, the window row's own labels. Nothing stored shows
+// the 8 AM clothing-worker.js reads, so the page never shows a default the
+// board does not use.
+const WX_LEAVE_DEFAULT=8;                  // what clothing-worker.js reads with nothing stored
+(function wxLeaveFill(){
+  const s=$("wxLeave");
+  for(let h=0;h<24;h++){ const o=document.createElement("option"); o.value=String(h); o.textContent=wxLabel(h); s.appendChild(o); }
+})();
+function wxLeavePaint(h){ $("wxLeave").value=String(Number.isInteger(h)?h:WX_LEAVE_DEFAULT); }
+$("wxLeave").onchange=async()=>{
+  const h=+$("wxLeave").value;
+  const r=await fetch("/settings",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({weatherLeaveAt:h})});
+  if(!r.ok){ toast("Could not save",false); return; }
+  toast("Outfits re-sorted for leaving at "+wxLabel(h));
+};
+
 // ---- Where the weather is read FOR (dad 9/23) ----
 // A typed town or ZIP, resolved by the hub (GET /weather/search) rather than
 // by this page, so one place owns the seam and the wording. With nothing
@@ -2075,8 +2102,8 @@ document.addEventListener("era-settings-section",e=>{
        lockPassPaint(!!s.lockPasscodeHash);
        exitPaint(s.exitTo==="home"?"home":"tdsnap");
        weekVideosPaint(s.downloadWeekVideos===false?"no":"yes");
-       wxPaint(s.weatherWindow||null); wxPlacePaint(s.location||null); }
-  catch(e){ exitPaint("tdsnap"); weekVideosPaint("yes"); wxPaint(null); wxPlacePaint(null); }
+       wxPaint(s.weatherWindow||null); wxLeavePaint(s.weatherLeaveAt); wxPlacePaint(s.location||null); }
+  catch(e){ exitPaint("tdsnap"); weekVideosPaint("yes"); wxPaint(null); wxLeavePaint(null); wxPlacePaint(null); }
   dwellDesc(); pencilDwellPaint(); settleDesc(); mvolDesc(); lockDesc();
   try{
     const c=await (await fetch(ENGINE+"/config")).json();

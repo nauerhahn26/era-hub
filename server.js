@@ -2168,6 +2168,13 @@ const server = http.createServer((req, res) => {
         if (iw === null) delete s.weatherWindow;
         else if (iw && typeof iw === "object" && Number.isInteger(iw.from) && Number.isInteger(iw.to) &&
                  iw.from >= 0 && iw.to <= 23 && iw.from < iw.to) s.weatherWindow = { from: iw.from, to: iw.to };
+        // The hour she leaves the house (spec 2026-11-02 §3): the morning the
+        // outfits lean from and the jackets follow. An integer hour 0-23;
+        // null clears it back to the worker's 8 AM; anything else is ignored.
+        const wasLeave = s.weatherLeaveAt;
+        const il0 = inc.weatherLeaveAt;
+        if (il0 === null) delete s.weatherLeaveAt;
+        else if (Number.isInteger(il0) && il0 >= 0 && il0 <= 23) s.weatherLeaveAt = il0;
         // The place a parent typed (dad 9/23: "either city or town or zip —
         // that's how people think"). Taken FIELD BY FIELD: a field that is not
         // what it should be costs that field and nothing else. lat/lon are the
@@ -2211,8 +2218,10 @@ const server = http.createServer((req, res) => {
         // and today's board a board for the wrong hours: throw the cache away
         // and re-sort the wardrobe she already has. Never an ingest, never an
         // AI request — that is what "New outfits from new photos" is for.
-        // A new PLACE is the same fact about the other half of that key.
-        if (JSON.stringify(s.weatherWindow || null) !== wasWindow || locSig(s.location) !== wasLoc) {
+        // A new PLACE is the same fact about the other half of that key, and
+        // a new leave-the-house hour (11/2) is a new morning to read.
+        if (JSON.stringify(s.weatherWindow || null) !== wasWindow || locSig(s.location) !== wasLoc ||
+            s.weatherLeaveAt !== wasLeave) {
           try { fs.rmSync(path.join(DATA, ".weather-cache.json"), { force: true }); } catch {}
           clothing.rebuildToday().catch(() => {});
         }

@@ -995,6 +995,33 @@ test("the weather-window row loads the saved hours and saves a change", async ()
   } finally { await ctx.close(); await post(null); }
 });
 
+// "She leaves the house at" (spec 2026-11-02 §3; dad, 11/2: "low 50s but will
+// get to 67 as a max ... would you send your 7 y old to school in shorts?").
+// One select under the window row, the same hour labels, saved the moment it
+// changes; nothing stored shows the 8 AM the worker reads.
+test("the leave-the-house select shows the stored hour (8 AM untouched) and saves a change", async () => {
+  const post = (weatherLeaveAt) => fetch(`${BASE}/settings`, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ weatherLeaveAt }) });
+  const saved = async () => (await (await fetch(`${BASE}/settings`)).json()).weatherLeaveAt;
+  await post(null);
+  let { ctx, page } = await settingsPage(null, { fragment: "clothing" });
+  try {
+    await page.waitForFunction(() => document.getElementById("wxLeave").value === "8", null, { timeout: 8000 });
+    assert.equal(await page.$eval("#wxLeave", s => s.selectedOptions[0].textContent), "8 AM");
+    assert.equal(await page.$eval("#wxLeave", s => s.options.length), 24, "every hour of the day, one select");
+    assert.match(await page.$eval("#wxLeaveRow", e => e.textContent), /She leaves the house at/);
+    const hint = await page.$eval("#wxLeaveHint", e => e.textContent);
+    assert.match(hint, /morning/i, hint);
+    await page.selectOption("#wxLeave", "7");
+    await page.waitForFunction(() => /Outfits re-sorted for leaving at 7 AM/.test(document.getElementById("toast").textContent),
+      null, { timeout: 8000 });
+    assert.equal(await saved(), 7);
+    await ctx.close();
+    ({ ctx, page } = await settingsPage(null, { fragment: "clothing" }));
+    await page.waitForFunction(() => document.getElementById("wxLeave").value === "7", null, { timeout: 8000 });
+  } finally { await ctx.close(); await post(null); }
+});
+
 // ---- Where the weather is read FOR (weather unit A, plan T5.0-T5.4) -------
 //
 // The point used to come from an IP lookup. On both family devices that was a

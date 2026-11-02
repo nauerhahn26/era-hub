@@ -130,7 +130,7 @@
     contextual(writing,'Manage writing email →','connections/email');
   }
   const weather = newCard('weather','Weather for outfits','clothing','Choose the place and hours used for outfits on this computer.');
-  for (const id of ['wxPlace','wxPlaceHits','wxWindow','wxHint']) if (byId(id)) weather.append(byId(id));
+  for (const id of ['wxPlace','wxPlaceHits','wxWindow','wxHint','wxLeaveRow','wxLeaveHint']) if (byId(id)) weather.append(byId(id));
   const wardrobe = newCard('wardrobe','Wardrobe & outfits','clothing','Clothing preparation, favourites and accessories.');
   const prep = node('div', {id:'clothingPrepStatus', class:'status'}); wardrobe.append(prep);
   for (const id of ['picksStatus','accStatus']) if (byId(id)) wardrobe.append(byId(id));
