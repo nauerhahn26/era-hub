@@ -39,13 +39,15 @@ async function until(fn, ms = 8000) {
   for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t0 > ms) throw new Error("timed out: " + fn.toString().slice(0, 80)); await sleep(100); }
 }
 
-// the stand-in engine: answers /status, records a POST /shutdown
-let bus = null, shutdowns = 0;
+// the stand-in engine: answers /status with whatever `busStatus` says (a
+// real engine reports connected/silentMs/samples since v2.7; an older one
+// reports neither, and is simply "alive"), records a POST /shutdown
+let bus = null, shutdowns = 0, busStatus = { ok: true, stand: "in" };
 function raiseBus() {
   return new Promise((resolve) => {
     bus = http.createServer((req, res) => {
       if (req.method === "POST" && req.url === "/shutdown") { shutdowns++; req.resume(); res.writeHead(200).end("{}"); return; }
-      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true, stand: "in" }));
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(busStatus));
     });
     bus.listen(BUS, "127.0.0.1", resolve);
   });
@@ -58,7 +60,8 @@ function boot() {
     cwd: INSTALL, stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, ERA_DATA_DIR: DATA, ERA_BIND: "127.0.0.1", ERA_NO_UPDATE: "1",
            ERA_UPDATE_URL: "http://127.0.0.1:9", ERA_GAZE_CSC: CSC, ERA_GAZE_BUS_PORT: String(BUS),
-           ERA_GAZE_POLL_MS: "150", ERA_GAZE_GRACE_MS: "0", ERA_GAZE_DOWN_MS: "400", ERA_GAZE_BACKOFF_MS: "600,1200" },
+           ERA_GAZE_POLL_MS: "150", ERA_GAZE_GRACE_MS: "0", ERA_GAZE_DOWN_MS: "400", ERA_GAZE_BACKOFF_MS: "600,1200",
+           ERA_GAZE_STREAM_SILENT_MS: "500" },
   });
   child.stdout.on("data", (d) => { log += d; });
   child.stderr.on("data", (d) => { log += d; });
@@ -120,6 +123,40 @@ test("the engine comes back: the keeper is watching again and counts no more res
   const n = s.gaze.restarts;
   await sleep(1500);
   assert.equal((await status()).gaze.restarts, n);
+});
+
+// Tablet 2026-11-01: Modern Standby re-plugged the Tobii tracker; the engine's
+// Stream Engine connection stayed open with no error and no frame for 17 hours,
+// the bus answered, and the hub called it healthy. A healthy tracker never goes
+// quiet (about two frames a second with nobody there), so an engine that says
+// "connected" and "silent for longer than ERA_GAZE_STREAM_SILENT_MS" is gone.
+test("the bus answers but the tracker stream is silent: the keeper treats the engine as gone and starts it over", async () => {
+  const n0 = (await status()).gaze.restarts, l0 = launches();
+  busStatus = { connected: true, silentMs: 999999, samples: 5 };
+  await until(async () => (await status()).gaze.restarts >= n0 + 1, 4000);
+  assert.equal(launches(), l0 + 1, "our exe was launched once");
+  assert.match(log, /\[gaze\] engine answers but its tracker stream has been silent for \d+ s — counting it as gone/);
+  // the fresh engine streams again: watching, and no more restarts
+  busStatus = { connected: true, silentMs: 120, samples: 6 };
+  const s = await until(async () => { const j = await status(); return j.gaze.state === "watching" && j.gaze.alive ? j : null; });
+  const n = s.gaze.restarts;
+  await sleep(1500);
+  assert.equal((await status()).gaze.restarts, n);
+});
+
+test("a tracker that is unplugged is the engine's own retry loop, never a restart", async () => {
+  busStatus = { connected: false, silentMs: null, samples: 6 };
+  const n = launches();
+  await sleep(1500);
+  assert.equal(launches(), n, "no tracker connected: the engine is looking for it; the hub leaves it alone");
+  assert.equal((await status()).gaze.state, "watching");
+  busStatus = { connected: true, silentMs: 80, samples: 7 };
+});
+
+test("GET /status carries the engine's own stream report for a human or the school queue to read", async () => {
+  const s = await until(async () => { const j = await status(); return j.gaze.engine && j.gaze.engine.samples === 7 ? j : null; });
+  assert.deepEqual(s.gaze.engine, { connected: true, silentMs: 80, samples: 7 });
+  assert.equal(s.gaze.streamSilentMs, 500);
 });
 
 test("POST /gaze/stop: the stop is remembered on disk, the engine is told to shut down, and nothing restarts it", async () => {
