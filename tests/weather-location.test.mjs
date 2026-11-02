@@ -348,7 +348,9 @@ test("a new window is read out of the stored series, with no call", async () => 
   settings({ location: TYPED, weatherWindow: { from: 14, to: 17 } });
   const before = asks.length;
   await clothing.rebuildToday();
-  assert.match(tile().label, /^81°/, "the afternoon hours of the stored day");
+  // RE-PINNED 11/2 (spec 2026-11-02 §3): the 60 °F at the 8 AM leave hour is
+  // the morning now, so the tile reads "60° → 81°" — the high after the arrow
+  assert.match(tile().label, /→ 81°/, "the afternoon hours of the stored day");
   settings({ location: TYPED, weatherWindow: { from: 9, to: 12 } });
   await clothing.rebuildToday();
   assert.match(tile().label, /^60°/, "...and the morning hours of the same stored day");

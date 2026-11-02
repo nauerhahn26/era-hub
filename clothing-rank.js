@@ -465,6 +465,20 @@ function sharesAt(t) {
   };
   return { raw, top: floored(raw.top, TOP_KINDS), legs: floored(raw.legs, LEG_SIDES) };
 }
+// planningTemp(morning, high) → the planning °F the curve, the fit rank and the
+// grids read (spec 2026-11-02 §3; amends the 9/23 warmth-model spec §4, which
+// planned for the window's warmest hour alone). Two thirds of the way from the
+// morning (the hour she leaves the house) to the high. Dad, 11/2: "would you
+// send your 7 y old to school in shorts? A tank top? No. You'd do pants and
+// maybe a t-shirt / long sleeve, knowing you might be a bit warmer by end of
+// day" — and on the midpoint first offered: "planning for the midpoint is
+// gonna leave her in too warm of clothes on a regular basis. Try maybe 2/3 to
+// max." No morning read: the high alone, as before. No high: null (offline).
+function planningTemp(morning, high) {
+  if (!isTemp(high)) return null;
+  if (!isTemp(morning)) return high;
+  return Math.round(morning / 3 + (2 * high) / 3);
+}
 // The floor and the renormalisation, over the kinds in `present` (all of them
 // unless a wardrobe lacks some: spec §7.2, "renormalised over the non-empty
 // cells"). `floor` 0 is the never-empty retry.
@@ -1096,7 +1110,7 @@ module.exports = {
   JITTER_PTS, STAPLE_SLOTS, STAPLE_POOL, YES_WEIGHT, INFERRED_WEIGHT, SINGLE_STYLE,
   COMBO_RETURN_DAYS, COMBO_RECENCY_PTS,
   BAND_WARMTH, WARMTH_LEVELS, FIT, FIT_PTS_PER_DEG, fitAttrs, fitFields, fitTarget, FIT_WORDS,
-  SPECTRUM_K, LEGS_CROSSOVER_F, LONG_SLEEVE_CROSSOVER_F, SLEEVELESS_CROSSOVER_F, SHARE_FLOOR, sharesAt, lookCell,
+  SPECTRUM_K, LEGS_CROSSOVER_F, LONG_SLEEVE_CROSSOVER_F, SLEEVELESS_CROSSOVER_F, SHARE_FLOOR, sharesAt, planningTemp, lookCell,
   GARMENT_KINDS, ACCESSORY_KINDS, CATEGORIES, OCCASIONS, isAccessory, accessoryOrder, weatherOrder,
   h, hmod, dayKey, yesterdayOf, daysBetween, comboKey,
   attributes, isNeutral, harmonizes, styleScore, pairKey, normalizePairing,
