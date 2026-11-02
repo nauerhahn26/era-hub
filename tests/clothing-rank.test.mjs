@@ -1277,6 +1277,34 @@ describe("accessoryOrder — warmth closeness to the band (accessories spec §4.
   });
 });
 
+describe("planningTemp — two thirds of the way from the morning to the high (spec 2026-11-02 §3)", () => {
+  // dad, 11/2: "planning for the midpoint is gonna leave her in too warm of
+  // clothes on a regular basis. Try maybe 2/3 to max."
+  test("dad's days: 52/67 → 62, 55/72 → 66, 60/75 → 70, 65/85 → 78, 45/60 → 55", () => {
+    assert.equal(R.planningTemp(52, 67), 62);
+    assert.equal(R.planningTemp(55, 72), 66);
+    assert.equal(R.planningTemp(60, 75), 70);
+    assert.equal(R.planningTemp(65, 85), 78);
+    assert.equal(R.planningTemp(45, 60), 55);
+  });
+  test("no morning read (null / undefined / NaN): the high unchanged, as before 11/2", () => {
+    assert.equal(R.planningTemp(null, 67), 67);
+    assert.equal(R.planningTemp(undefined, 67), 67);
+    assert.equal(R.planningTemp(NaN, 67), 67);
+  });
+  test("no high: null", () => {
+    assert.equal(R.planningTemp(52, null), null);
+    assert.equal(R.planningTemp(null, null), null);
+  });
+  test("the result is an integer °F", () => {
+    for (let m = 30; m <= 90; m++) for (let hi = m; hi <= 100; hi += 3)
+      assert.ok(Number.isInteger(R.planningTemp(m, hi)), `${m}/${hi}`);
+  });
+  test("the 5 % floor is untouched by the lean (pinned as 9/29)", () => {
+    assert.equal(R.SHARE_FLOOR, 0.05);
+  });
+});
+
 describe("weatherOrder — every garment grid follows the planning °F (spec 2026-11-01 §2-§3)", () => {
   // distance = the sum over the garment's FIT rows of |temp − centre|: one row
   // for a top / pants / shorts, two for a dress or a set (its top half and its

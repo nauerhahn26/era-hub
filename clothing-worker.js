@@ -86,7 +86,7 @@ const CLOTHING = () => path.join(DATA, "clothing");
 // drops a whole album folder into Drive's clothing/ (QA 9/2 — Settings said
 // "15 new", the board said "No content yet") must get a board like anyone else.
 const { listPhotos, photoSet, PHOTOSET_FILE } = require("./clothing-photos");
-const { dayKey, buildCandidates, toWorkerShape, attributes, accessoryOrder, weatherOrder, fitFields, fitTarget,
+const { dayKey, buildCandidates, toWorkerShape, attributes, accessoryOrder, weatherOrder, planningTemp, fitFields, fitTarget,
         GARMENT_KINDS, ACCESSORY_KINDS, CATEGORIES, OCCASIONS } = require("./clothing-rank.js");
 const { openLog, mergeHistory } = require("./clothing-log.js");
 // The family's day, in the family's zone — the stamp every "we have already
@@ -1226,6 +1226,23 @@ function weatherWindow() {
   } catch {}
   return { ...DEFAULT_WINDOW };
 }
+// The hour she LEAVES THE HOUSE (spec 2026-11-02 §3): the morning the planning
+// °F leans from and the jackets are ordered by. Dad, 11/2: "low 50s but will
+// get to 67 as a max during 10-2p, would you send your 7 y old to school in
+// shorts? A tank top? No." Stored beside the window, read with the same
+// posture: anything but an integer 0-23 is ABSENT, which is 8 AM. A window
+// that starts earlier than it clamps it to the window's start — she is out by
+// then — and that hour is then no SEPARATE morning (the tile reads as before).
+const DEFAULT_LEAVE_AT = 8;
+function leaveHour(win) {
+  let h = DEFAULT_LEAVE_AT;
+  try {
+    const s = JSON.parse(fs.readFileSync(path.join(DATA, "app-settings.json"), "utf8"));
+    const v = s && s.weatherLeaveAt;
+    if (Number.isInteger(v) && v >= 0 && v <= 23) h = v;
+  } catch {}
+  return win ? Math.min(h, win.from) : h;
+}
 // The place a parent TYPED into Settings, if there is one. Read defensively
 // out of the same file and with the same posture as the window above —
 // malformed is ABSENT, which falls back to the IP guess rather than aiming the
@@ -1281,21 +1298,31 @@ function readStore() {
 // series is a week now, and an hour 10 from tomorrow is not today's hour 10.
 // Times are local to the point (Open-Meteo's timezone=auto; weather.gov's
 // offset stripped), so the first ten characters are the point's own date.
-function readWindow(hourly, day, win) {
-  let t = null, code = 0;
+//
+// 11/2 (spec 2026-11-02 §3-§4): TWO numbers, not one. `high` is the warmest
+// hour she is out, as it always was; `morning` is the hour she leaves the house
+// (`leaveAt`; null when the series has no such hour). The planning °F `t` is
+// two thirds of the way from the morning to the high (planningTemp — dad, 11/2:
+// "Try maybe 2/3 to max"), and the band is t's. `morningBand` is the morning's
+// own band: the jackets follow it. No morning read: t is the high, as before.
+const bandOf = t => t >= 78 ? "hot" : t >= 66 ? "warm" : t >= 54 ? "cool" : "cold";
+function readWindow(hourly, day, win, leaveAt) {
+  let high = null, code = 0, morning = null;
   for (let i = 0; i < hourly.time.length; i++) {
     if (hourly.time[i].slice(0, 10) !== day) continue;
     const hour = Number(hourly.time[i].slice(11, 13));
-    if (!inWindow(hour, win)) continue;
     const temp = hourly.temp[i];
-    if (typeof temp === "number" && (t === null || temp > t)) t = temp;   // the warmest hour she is out
+    if (hour === leaveAt && typeof temp === "number" && Number.isFinite(temp)) morning = Math.round(temp);
+    if (!inWindow(hour, win)) continue;
+    if (typeof temp === "number" && (high === null || temp > high)) high = temp;   // the warmest hour she is out
     const c = hourly.code[i];
     if (typeof c === "number" && c > code) code = c;                      // ...dressed for the worst of them
   }
-  if (t === null) return null;
-  t = Math.round(t);
-  const band = t >= 78 ? "hot" : t >= 66 ? "warm" : t >= 54 ? "cool" : "cold";
-  return { t, band, symbol: weatherSymbol(code) };
+  if (high === null) return null;
+  high = Math.round(high);
+  const t = planningTemp(morning, high);
+  return { t, band: bandOf(t), symbol: weatherSymbol(code), morning, high,
+           morningBand: morning === null ? null : bandOf(morning) };
 }
 // Rung 1. The whole week in the one call we were already making (dad 10/10:
 // "if it's single request try to fetch the next few days so you can store it").
@@ -1371,6 +1398,7 @@ function mergeSeries(fresh, old, day) {
 }
 async function weather() {
   const win = weatherWindow();
+  const leaveAt = leaveHour(win);
   const loc = locationOf();
   // The PLACE the store is for: moving the point makes a stored week a week
   // somewhere else. Three decimals is ~100 m, finer than any town a parent
@@ -1384,13 +1412,13 @@ async function weather() {
   const stored = readStore();
   const mine = stored && stored.place === place ? stored : null;
   const answer = (s, how) => {
-    const r = readWindow(s.hourly, day, win);
+    const r = readWindow(s.hourly, day, win, leaveAt);
     console.log("[clothing] weather: " + how + (r ? "" : " — but nothing in it for today's hours"));
-    return r && { ...r, window: win, place: (loc && loc.name) || null,
+    return r && { ...r, window: win, leaveAt, place: (loc && loc.name) || null,
                   fetchedAt: s.at, source: s.source };
   };
   // Under 3 h old: served with no call, exactly as before.
-  if (mine && Date.now() - mine.at < REFRESH_MS && readWindow(mine.hourly, day, win))
+  if (mine && Date.now() - mine.at < REFRESH_MS && readWindow(mine.hourly, day, win, leaveAt))
     return answer(mine, "the stored " + mine.source + " week, under 3 h old");
   const why = [];
   let point = loc ? { latitude: loc.lat, longitude: loc.lon } : null;
@@ -1434,7 +1462,7 @@ async function weather() {
   // `stale`: dealt on, but blind for the retry's purposes, so the shell keeps
   // walking the ladder until a provider answers (spec 2026-10-19 §5 — a
   // logon start races Wi-Fi, and this board used to stand all day).
-  if (mine && readWindow(mine.hourly, day, win))
+  if (mine && readWindow(mine.hourly, day, win, leaveAt))
     return { ...answer(mine, "the stored " + mine.source + " week fetched " +
       new Date(mine.at).toISOString() + " (" + why.join("; ") + ")"), stale: true };
   console.error("[clothing] weather: none — open-meteo, weather.gov and the stored week all failed (" +
@@ -1644,12 +1672,13 @@ async function buildCataloged(cat, known) {
   // family's; there is no UI for them this cut).
   const seed = dayKey(Date.now(), workerData.tz);
   const m = shared();
-  // The deal is apportioned and ranked by the planning °F itself — the
-  // warmest hour of the window she is out (9/23 §4) — never the band word,
+  // The deal is apportioned and ranked by the planning °F itself — two
+  // thirds of the way from the morning to the warmest hour of the window she
+  // is out (spec 2026-11-02 §3, amending 9/23 §4) — never the band word,
   // which is four buckets wide and let an 81 °F morning deal 7 long sleeves
   // and 11 leggings (spec 2026-09-29 §1-§2, §7). No weather = null = the
-  // port's deal, as band null was. The band still names the tile, orders the accessories and goes on
-  // the offer record.
+  // port's deal, as band null was. The band still names the tile and goes on
+  // the offer record; the accessories follow the morning's band (below).
   const today = buildCandidates({
     items, band, temp: w ? w.t : null, cap: per + laterPer * (PAGES - 1), seed,
     pairing: m.pairing, favorites: m.favorites,
@@ -1703,8 +1732,19 @@ async function buildCataloged(cat, known) {
       const lead = span === "all day" ? "All day"
         : span ? "Between " + hourLabel(w.window.from) + " and " + hourLabel(w.window.to)
         : "Today";                      // ...and so is this one
-      buttons.push({ label: w.t + "\u00b0  " + w.band, type: "control", symbol: w.symbol,
-        say: lead + " it is " + w.band + ", about " + w.t + " degrees.",
+      // 11/2 (spec 2026-11-02 §3): the tile says BOTH numbers the plan is
+      // made of — the morning she leaves the house in and the high she is out
+      // for — and the band of the plan between them: "52° → 67°  cool". A
+      // morning read at the window's own start (the leave hour clamped to it)
+      // is no separate morning, and a morning no cooler than the high is no
+      // "warming to": in both the tile reads as it did before.
+      const twoNumbers = Number.isFinite(w.morning) && Number.isFinite(w.high) && w.morning < w.high &&
+        (!w.window || !Number.isInteger(w.leaveAt) || w.leaveAt < w.window.from);
+      buttons.push({ label: twoNumbers ? w.morning + "\u00b0 \u2192 " + w.high + "\u00b0  " + w.band
+                                       : w.t + "\u00b0  " + w.band, type: "control", symbol: w.symbol,
+        say: twoNumbers
+          ? "This morning it is about " + w.morning + " degrees, warming to " + w.high + ". Dress for " + w.band + "."
+          : lead + " it is " + w.band + ", about " + w.t + " degrees.",
         // The PLACE leads the footnote: a forecast for the wrong town is
         // what read cold every day for eleven days, invisibly, and the only
         // way that is ever caught is if the board says where it is reading.
@@ -1802,6 +1842,10 @@ async function buildCataloged(cat, known) {
   // planning °F, and an offline board is byte for byte the board it was.
   const door = wardrobeDoor(3, 4);
   const temp = w ? w.t : null;
+  // Jackets follow the MORNING (spec 2026-11-02 §3): a jacket is for leaving
+  // the house, so the accessory grids are ordered by the band of the hour she
+  // leaves, not the plan's. No morning read: the plan's band, as before.
+  const accBand = w ? w.morningBand || w.band : null;
   const browse = cat => {
     const list = items.filter(i => i.category === cat && !isFancy(i));
     return typeof temp === "number" && Number.isFinite(temp) ? weatherOrder(list, temp) : list;
@@ -1813,7 +1857,7 @@ async function buildCataloged(cat, known) {
   boards.push(...gridPages("cat_outfit", "Outfits", browse("set"), "build", door));
   // Every browse grid above asks for a GARMENT word, so an accessory falls
   // into none of them (preflight 2): each present kind gets its own pages.
-  // Back goes to Full wardrobe. The day's band only RE-ORDERS
+  // Back goes to Full wardrobe. The morning's band (11/2) only RE-ORDERS
   // these pages (accessoryOrder): on a cold morning the coats lead, but no
   // accessory is ever weather-hidden (spec §4.1). Full wardrobe stays reachable.
   // Dress up is every fancy piece — garments and accessories — its garments
@@ -1825,7 +1869,7 @@ async function buildCataloged(cat, known) {
   for (const k of kinds)
     boards.push(...gridPages("acc_" + k.id, k.label, k === DRESS_UP
       ? weatherOrder(items.filter(isFancy), temp)
-      : accessoryOrder(items.filter(i => i.category === k.id), band), "build", door));
+      : accessoryOrder(items.filter(i => i.category === k.id), accBand), "build", door));
   const drawn = composites.finish();
   console.log("[clothing] composites: " + drawn.drawn + " drawn, " + drawn.reused + " reused");
   return { boards, present, weatherless: !w, weatherStale: !!(w && w.stale), composites: drawn };

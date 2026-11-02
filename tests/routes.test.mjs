@@ -212,6 +212,41 @@ test("Settings weatherWindow round-trips, rejects junk, and re-sorts today's out
   assert.ok(!fs.existsSync(cache), "clearing it is a change too");
 });
 
+// The hour she leaves the house (spec 2026-11-02 §3-§4): the morning the
+// planning °F leans from and the jackets follow. Stored beside the window with
+// the same posture — an integer hour 0-23, anything else ignored, null clears
+// it back to the worker's 8 AM — and a change re-sorts today's board exactly
+// as a new window does. 7 here is an invented hour, never a family's.
+test("Settings weatherLeaveAt round-trips, rejects junk, and re-sorts today's outfits", async () => {
+  const post = (weatherLeaveAt) => fetch(`${BASE}/settings`, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ weatherLeaveAt }) });
+  const cache = path.join(TMP, ".weather-cache.json");
+  const stamp = () => fs.writeFileSync(cache, JSON.stringify({ at: Date.now(), place: "ip", source: "open-meteo",
+    hourly: { time: [], temp: [], code: [] } }));
+  const get = async () => (await (await fetch(`${BASE}/settings`)).json()).weatherLeaveAt;
+
+  assert.equal(await get(), undefined, "nothing stored by default: the worker reads 8 AM");
+
+  stamp();
+  await post(7);
+  assert.equal(await get(), 7);
+  assert.ok(!fs.existsSync(cache), "a change throws the stored weather away and rebuilds");
+
+  stamp();
+  await post(7);
+  assert.ok(fs.existsSync(cache), "the same hour again is not a change: nothing is rebuilt");
+
+  for (const junk of ["8", 24, -1, 3.5, {}, true, [8]]) {
+    await post(junk);
+    assert.equal(await get(), 7, "ignored: " + JSON.stringify(junk));
+  }
+  assert.ok(fs.existsSync(cache), "junk changes nothing, so nothing is rebuilt");
+
+  await post(null);
+  assert.equal(await get(), undefined, "null clears it back to 8 AM");
+  assert.ok(!fs.existsSync(cache), "clearing it is a change too");
+});
+
 // The media lock (dad 9/14): a grown-up holds the board's 🔒 and music and
 // movies stop for a while. Two knobs live here beside the other board
 // settings — how long the lock lasts, and the passcode that ends it early.
