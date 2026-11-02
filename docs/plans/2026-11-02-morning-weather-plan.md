@@ -87,7 +87,7 @@ Branch `feat/clothing-morning-weather`, worktree `era-hub--wt-clothing-morning-w
 
 ### Gate: review (phase boundary)
 
-- [ ] T7 Overseer review of the diff against spec §3-§4: the rule, the fallback, the clamp, the
+- [x] T7 Overseer review of the diff against spec §3-§4: the rule, the fallback, the clamp, the
       accessory band, the tile, the knob. Focused run:
       `node --test tests/clothing-rank.test.mjs tests/clothing-weather.test.mjs tests/clothing-fit.test.mjs tests/clothing-accessories.test.mjs tests/clothing-variety.test.mjs tests/clothing-diversity.test.mjs tests/settings-ui.test.mjs tests/routes.test.mjs tests/weather-location.test.mjs`
       Builder's focused run (review left to the overseer): `# pass 406 / # fail 0`.
@@ -109,8 +109,12 @@ Branch `feat/clothing-morning-weather`, worktree `era-hub--wt-clothing-morning-w
       ties the tees at 14 and wins on id); jackets coat, shell. 60/75 day: tile `60° → 75°  warm`;
       page 1 = 4 shorts + 4 pants, 2 tank looks; tops longsleeve, tee1, tee2, tank, sweater; jackets
       coat, shell (the 60 °F morning is cool). Both pids killed by number.
-- [ ] T9 Full gate detached (`setsid nohup bash tools/era-gate.sh`), pid recorded, one
+- [x] T9 Full gate detached (`setsid nohup bash tools/era-gate.sh`), pid recorded, one
       `bash tools/gate-wait.sh <pid> --timeout 570` (again if 124). Tick with the receipt line.
+      **208 passed, 0 failed** on 49c5568 (run `2026-11-02T19-52-04Z-2db6e03`, 0 reused; stamp
+      `/tmp/era-gate-green/2db6e032ba46dfb47a2689644c898aec9572af60`). Review (T7): the rule, the fallback,
+      the clamp, the morning band and the knob match spec §3-§4; the tile's two-number condition
+      (morning cooler than the high AND the leave hour before the window) is the builder's call, kept.
 
 ### Phase 5 — ship (on dad's word only)
 
@@ -119,4 +123,12 @@ Branch `feat/clothing-morning-weather`, worktree `era-hub--wt-clothing-morning-w
 
 ## Retrospective
 
-(filled after T9)
+- The preflight caught the fixture re-pin (55 at 8 AM leans every window) but missed two suites: the
+  weather-location stub also carries a 60 °F hour 8, and the 9/29 hot-deal case had to move its window
+  to keep testing 80 °F. Name every suite whose fixture has a leave-hour reading next time.
+- The tile's "52° → 52°  warming to 52" on a flat day was not in the spec; the builder's condition
+  (two numbers only when the morning is cooler and the leave hour precedes the window) is right.
+- `settings-layout.js` moves rows into cards by id: a new Settings row is invisible until it is listed
+  there. Worth a line in the Settings page's own comments.
+- Observed, not touched: at 70 °F the deal's page 1 can open with a wool sweater over linen shorts
+  (long sleeves hold 18 % at 70 and a sweater is a long sleeve). The deal's business, for dad to judge.
