@@ -11,12 +11,18 @@ import path from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { foldScores, openMusicLog, poolMusicEvents } = require("../music-log.js");
+const { foldScores, openMusicLog, poolMusicEvents, HALF_LIFE_MS } = require("../music-log.js");
 const { sectionOrders, SECTIONS } = require("../music-sections.js");
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-music-log-"));
 const at = (s) => "2026-10-31T10:00:" + String(s).padStart(2, "0") + ".000Z";
 const ev = (s, song, action, extra = {}) => ({ t: at(s), song, action, ...extra });
+// The scoring fixtures all fall within one minute; folding them at the minute's
+// start puts every pick at age 0 (a later t clamps to 0, tested below), so the
+// base weights read exactly. Decay has its own tests.
+const NOW = Date.parse(at(0));
+const DAY = 24 * 3600 * 1000;
+const iso = (ms) => new Date(ms).toISOString();
 
 // ---- scoring -----------------------------------------------------------------
 
@@ -27,7 +33,7 @@ test("a partial pick scores 1 and a full pick scores 3, each pick once", () => {
     ev(4, "beta", "full"),                        // a second "full" in the same pick: still 3
     ev(5, "gamma", "play"), ev(6, "gamma", "done"), // ended naturally while capped
     ev(7, "delta", "full", { fresh: true }),      // Full song from silence: a full pick
-  ]);
+  ], null, NOW);
   assert.equal(scores.get("alpha"), 1);
   assert.equal(scores.get("beta"), 3);
   assert.equal(scores.get("gamma"), 3);
@@ -38,7 +44,7 @@ test("every pick counts: replays and Full song from silence after a Stop are new
   const scores = foldScores([
     ev(1, "alpha", "play"), ev(2, "alpha", "play"),           // grid door, then a hero replay
     ev(3, "alpha", "full", { fresh: true }),                    // Full song after a Stop
-  ]);
+  ], null, NOW);
   assert.equal(scores.get("alpha"), 1 + 1 + 3);
 });
 
@@ -48,21 +54,99 @@ test("old history (no fresh flag): a play then a full for the same song before t
     ev(4, "beta", "play"), ev(5, "beta", "end"),                         // an old "end" is ambiguous: partial
     ev(6, "gamma", "full"),                                              // full with no play before it: a full pick
     ev(7, "alpha", "play"), ev(8, "beta", "full"),                       // a full for ANOTHER song is its own pick
-  ]);
+  ], null, NOW);
   assert.equal(scores.get("alpha"), 3 + 1);
   assert.equal(scores.get("beta"), 1 + 3);
   assert.equal(scores.get("gamma"), 3);
 });
 
 test("a natural end only finishes the pick it belongs to", () => {
-  const scores = foldScores([ev(1, "alpha", "play"), ev(2, "beta", "done")]);
+  const scores = foldScores([ev(1, "alpha", "play"), ev(2, "beta", "done")], null, NOW);
   assert.equal(scores.get("alpha"), 1);
   assert.equal(scores.has("beta"), false, "a done with no pick of its own scores nothing");
 });
 
 test("events are folded in time order, whatever order they arrive in", () => {
-  const scores = foldScores([ev(3, "alpha", "full"), ev(1, "alpha", "play")]);
+  const scores = foldScores([ev(3, "alpha", "full"), ev(1, "alpha", "play")], null, NOW);
   assert.equal(scores.get("alpha"), 3);
+});
+
+// ---- decay -------------------------------------------------------------------
+
+test("the score decays: ten full picks four months ago rank below three this week", () => {
+  const now = Date.parse("2026-10-31T12:00:00.000Z");
+  const events = [];
+  for (let i = 0; i < 10; i++) events.push({ t: iso(now - 120 * DAY - i * 60000), song: "old-favourite", action: "full", fresh: true });
+  for (let i = 0; i < 3; i++) events.push({ t: iso(now - (i + 1) * DAY), song: "current", action: "full", fresh: true });
+  const scores = foldScores(events, null, now);
+  assert.ok(scores.get("current") > scores.get("old-favourite"),
+    `current ${scores.get("current")} must beat old ${scores.get("old-favourite")}`);
+  assert.ok(scores.get("old-favourite") > 0, "never forgotten: still a favourite");
+  const o = sectionOrders([song("old-favourite"), song("current")], scores);
+  assert.deepEqual(o.fav, ["current", "old-favourite"]);
+});
+
+test("the half-life is 30 days: a pick exactly that old counts half its base", () => {
+  assert.equal(HALF_LIFE_MS, 30 * DAY);
+  const now = Date.parse("2026-10-31T12:00:00.000Z");
+  const scores = foldScores([
+    { t: iso(now - HALF_LIFE_MS), song: "full-one", action: "full", fresh: true },
+    { t: iso(now - HALF_LIFE_MS), song: "partial-one", action: "play" },
+  ], null, now);
+  assert.ok(Math.abs(scores.get("full-one") - 1.5) < 1e-9, String(scores.get("full-one")));
+  assert.ok(Math.abs(scores.get("partial-one") - 0.5) < 1e-9, String(scores.get("partial-one")));
+});
+
+test("an upgrade to full decays by the pick's start, not by the upgrade's time", () => {
+  const now = Date.parse("2026-10-31T12:00:00.000Z");
+  const start = now - HALF_LIFE_MS;
+  // one device's stream each: the pick in progress is per device
+  const full = foldScores([
+    { t: iso(start), song: "alpha", action: "play" },
+    { t: iso(now - 1000), song: "alpha", action: "full" },   // a late upgrade (old history: same pick)
+  ], null, now);
+  const done = foldScores([
+    { t: iso(start), song: "beta", action: "play" },
+    { t: iso(now - 1000), song: "beta", action: "done" },
+  ], null, now);
+  assert.ok(Math.abs(full.get("alpha") - 1.5) < 1e-9, String(full.get("alpha")));
+  assert.ok(Math.abs(done.get("beta") - 1.5) < 1e-9, String(done.get("beta")));
+});
+
+test("a pick dated in the future (clock skew between devices) counts at age 0", () => {
+  const now = Date.parse("2026-10-31T12:00:00.000Z");
+  const scores = foldScores([
+    { t: iso(now + 5 * DAY), song: "alpha", action: "full", fresh: true },
+    { t: iso(now + 5 * DAY), song: "beta", action: "play" },
+  ], null, now);
+  assert.equal(scores.get("alpha"), 3);
+  assert.equal(scores.get("beta"), 1);
+});
+
+test("a legacy line with no usable t still counts above zero, below any dated pick", () => {
+  const now = Date.parse("2026-10-31T12:00:00.000Z");
+  const scores = foldScores([
+    { song: "undated", action: "play" },
+    { t: "", song: "blank", action: "full" },
+    { t: "not a time", song: "garbled", action: "full", fresh: true },
+    { t: iso(now - 300 * DAY), song: "dated-old", action: "play" },
+  ], null, now);
+  for (const id of ["undated", "blank", "garbled"]) {
+    assert.ok(scores.get(id) > 0, id + " stays a favourite");
+    assert.ok(scores.get(id) < scores.get("dated-old"), id + " sinks below a dated pick");
+  }
+});
+
+test("scores() folds at the hub's clock, or at the now it was opened with", () => {
+  const { data, drive, poolRoot } = tree("clock");
+  const t = Date.parse("2026-10-31T12:00:00.000Z");
+  fs.writeFileSync(path.join(poolRoot, "events", "dev-a", "2026-10-31.jsonl"),
+    poolLine({ t: iso(t), kind: "music-full", songId: "alpha", fresh: true }));
+  const fixed = openMusicLog({ dataDir: data, poolRoot, driveFolder: drive, deviceId: "dev-a", now: () => t + HALF_LIFE_MS });
+  assert.ok(Math.abs(fixed.scores().get("alpha") - 1.5) < 1e-9);
+  const live = openMusicLog({ dataDir: data, poolRoot, driveFolder: drive, deviceId: "dev-a" });
+  const expect = 3 * Math.pow(0.5, Math.max(0, Date.now() - t) / HALF_LIFE_MS);
+  assert.ok(Math.abs(live.scores().get("alpha") - expect) < 1e-3);
 });
 
 // ---- sections ----------------------------------------------------------------
@@ -129,7 +213,7 @@ test("own lines go to the Drive folder; the score reads the local pool for this 
     poolLine({ t: at(2), kind: "music-full", songId: "alpha" }) +
     poolLine({ t: at(3), kind: "outfit-select", combo: ["x"] }) +
     "{torn");
-  const log = openMusicLog({ dataDir: data, poolRoot, driveFolder: drive, deviceId: "dev-a" });
+  const log = openMusicLog({ dataDir: data, poolRoot, driveFolder: drive, deviceId: "dev-a", now: () => NOW });
   assert.equal(log.scores().get("alpha"), 3, "old pool history counts on this device");
 
   assert.equal(log.record({ song: "beta", action: "play" }), true);
@@ -166,7 +250,7 @@ test("other devices' lines arrive through the mirror; own lines coming back are 
     JSON.stringify({ t: at(6), song: "beta", action: "play" }) + "\n");               // a syncer leftover
   fs.writeFileSync(path.join(mirrored, "dev-a", "2026-10-31.jsonl"),
     JSON.stringify({ t: at(1), song: "alpha", action: "play" }) + "\n");               // own line, mirrored back
-  const log = openMusicLog({ dataDir: data, poolRoot, driveFolder: drive, deviceId: "dev-a" });
+  const log = openMusicLog({ dataDir: data, poolRoot, driveFolder: drive, deviceId: "dev-a", now: () => NOW });
   const s = log.scores();
   assert.equal(s.get("alpha"), 1 + 3, "own pick (pool) + the other device's full pick");
   assert.equal(s.get("beta"), 1, "torn lines and .part files are skipped");

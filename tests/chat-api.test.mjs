@@ -270,6 +270,28 @@ test('SSE timestamps events, drops cancelled generations and sanitizes runtime e
   assert.equal(child.killed, true);
 });
 
+// Chat follows the hub's build (stable frame §16): `ready` carries the build the
+// hub passed in with its options (a value or a function), never one the API
+// reads itself; an unknown build leaves the field out.
+test('ready carries the build given in the options and omits it when none is given', async t => {
+  for (const [build, expected] of [['20261101.1200', '20261101.1200'], [() => '20261101.1300', '20261101.1300'], [undefined, undefined], ['', undefined], [() => { throw new Error('no build'); }, undefined]]) {
+    const s = await service(t, { env: configured, build });
+    const { id } = await (await s.request('/sessions')).json();
+    const controller = new AbortController();
+    const stream = await fetch(`${s.base}/sessions/${id}/events`, { signal: controller.signal });
+    const reader = stream.body.getReader();
+    await reader.read();
+    s.children[0].stdout.write(JSON.stringify({ type: 'ready', capabilities: { remoteFinal: true } }) + '\n');
+    let received = '';
+    while (!received.includes('"ready"')) received += new TextDecoder().decode((await reader.read()).value);
+    const ready = received.split('\n').filter(line => line.startsWith('data:')).map(line => JSON.parse(line.slice(5))).find(event => event.type === 'ready');
+    if (expected === undefined) assert.equal('build' in ready, false, `no build field for ${String(build)}`);
+    else assert.equal(ready.build, expected);
+    assert.equal(ready.capabilities.remoteFinal, true, 'the capabilities are as before');
+    controller.abort();
+  }
+});
+
 test('no-speech runtime errors are accepted with either supported code field', async t => {
   const s = await service(t, { env: configured });
   const { id } = await (await s.request('/sessions')).json();

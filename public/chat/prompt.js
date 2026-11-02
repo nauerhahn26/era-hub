@@ -5,10 +5,11 @@
 // stops it (amended 10/31 night); the page cancels it on a selection, a page
 // or mode swap, a hold, Clear, Back or the partner dialog. After a full reading
 // the same delay re-arms, up to PROMPT_READINGS readings of a batch, then
-// quiet. The page arms a batch once; a delay of 0 is off. onStart(text, n)
+// quiet (two since 11/1; dad: "only do 2x"). The page arms a batch once; a
+// delay of 0 is off. onStart(text, n)
 // gets the reading's whole spoken text and its number, onEnd() follows each
 // reading's end or cancel (spec §13: the page tells the hub its words as one clip).
-export const PROMPT_GAP_MS = 350, PROMPT_READINGS = 3;
+export const PROMPT_GAP_MS = 350, PROMPT_READINGS = 2;
 
 const value = v => (typeof v === 'function' ? v() : v);
 

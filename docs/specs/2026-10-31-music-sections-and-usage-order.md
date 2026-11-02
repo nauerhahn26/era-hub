@@ -58,6 +58,27 @@ Every pick counts once. A partial play scores 1 and a full play scores 3.
 - Existing history counts: past `music-play` / `music-full` pool events score
   by the same rule where they can be read.
 
+### Decay (amended 2026-11-01)
+
+A song she played a lot months ago but rarely now must fall from the top. Each
+pick's weight halves every 30 days of its age (exponential decay, as in
+frecency ranking): `base x 0.5^(age / 30 days)`, base 1 or 3 as above.
+
+- Age runs from the pick's start (its `play`, or the Full song from silence) to
+  now. Upgrading a pick to full adds the extra 2 decayed by that same start.
+- Why 30 days: a month-old pick counts half and a three-month-old one an
+  eighth, so a favourite she stops playing slides below the songs she plays now
+  within weeks, while last week's run still holds its place.
+- A pick dated in the future (another device's clock ahead) counts at age 0.
+- A line with no readable time (oldest history) counts as a year old: above
+  zero, below any recent pick.
+- Favorites stays "score above zero". Decay never reaches zero, so nothing she
+  has ever played leaves Favorites; it only sinks.
+- The clock alone never swaps two songs (every score shrinks by the same
+  factor); the order moves on a new pick. Of two equal picks the later one
+  ranks first; only exactly equal scores fall to the added-time tie-break. The
+  recipe's order part hashes the id order, not the scores.
+
 ## Sharing across devices
 
 Scores merge across every device the way clothing picks do

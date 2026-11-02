@@ -284,6 +284,7 @@ function syncHoldLock() {
     gridLocked = false;
     if (!$('partnerDialog').open) { gridKey = ''; renderGrid(controller.state); }
   }
+  if (reloadWanted) reloadWhenFree(); // a reload held back by the turn (spec 2026-10-28 §16)
 }
 async function control(type, extra = {}) {
   if (!session) return null;
@@ -983,6 +984,7 @@ function receiveEvent(event) {
   }
   if (data.type === 'ready') {
     clearTimeout(readyTimer);
+    buildPoll++; buildSeen(data.build); // the hub answered with its build (spec 2026-10-28 §16)
     remoteFinal = data.capabilities?.remoteFinal === true;
     remoteStreaming = data.capabilities?.remoteStreaming === true;
     stagedChoices = data.capabilities?.stagedChoices === true;
@@ -1500,9 +1502,56 @@ function endSession(type = 'close') {
 // Otherwise nothing is reported: the prepared microphone stays open and the
 // next hold starts a new session.
 function sessionLost(message) {
+  askBuildUntilAnswered(); // the hub may be restarting under an update (spec 2026-10-28 §16)
   if (holding || askPending || mode !== 'blocked' || controller.state.phase === 'Capturing question' || !controller.state.engineReady) { failSession(message); return; }
   endSession('close'); controller.standby(); paintAsk();
   if (wakeMode) setTimeout(() => { if (wakeMode && !session) void startEar(); }, 1000);
+}
+// ---- Chat follows the hub's build (spec 2026-10-28 §16) ----
+// The page remembers the hub's build it opened against (GET /version, or the
+// first `ready` that names one). A different build later means the hub was
+// updated under the page: it reloads itself, after any hold or press capture
+// in progress (a reading or replies on screen never delay it; dad: "just
+// update"). The same build is a plain restart: nothing reloads. The page asks
+// again after a session loss (every 5 s until the hub answers, up to 3 min),
+// at `ready` (its build, no fetch) and when it becomes visible again.
+// window.__chatFollow is the tests' seam: { reload, pollMs, limitMs }.
+const BUILD_POLL_MS = 5000, BUILD_POLL_LIMIT_MS = 180000;
+let pageBuild = null, reloadWanted = false, buildPoll = 0, reloadTimer = null;
+const follow = () => window.__chatFollow || {};
+function reloadPage() { if (typeof follow().reload === 'function') follow().reload(); else location.reload(); }
+function buildSeen(build) {
+  if (typeof build !== 'string' || !build.trim()) return;
+  if (!pageBuild) { pageBuild = build; return; }
+  if (build === pageBuild) return;
+  reloadWanted = true; reloadWhenFree();
+}
+// The turn in progress finishes on this page first: a hold (through its
+// transcript) or a press capture; the reload comes at its end.
+function reloadWhenFree() {
+  clearTimeout(reloadTimer); reloadTimer = null;
+  if (!reloadWanted) return;
+  if (holdActive() || pressing()) { reloadTimer = setTimeout(reloadWhenFree, 500); return; }
+  reloadWanted = false; buildPoll++; reloadPage();
+}
+async function askBuild() {
+  try {
+    const r = await fetch('/version', { cache: 'no-store' });
+    if (!r.ok) return false;
+    buildSeen((await r.json()).build);
+    return true;
+  } catch { return false; }
+}
+// After a session loss the hub may be away for a moment: ask until it answers
+// (or `ready` arrives), giving up after the limit. One loop at a time.
+function askBuildUntilAnswered() {
+  const mine = ++buildPoll, pollMs = Number(follow().pollMs) || BUILD_POLL_MS, until = Date.now() + (Number(follow().limitMs) || BUILD_POLL_LIMIT_MS);
+  (async () => {
+    while (mine === buildPoll) {
+      if (await askBuild() || mine !== buildPoll || Date.now() >= until) return;
+      await new Promise(resolve => setTimeout(resolve, pollMs));
+    }
+  })();
 }
 // Closes everything: the session, the held question and the microphone (end, pause, hide, leave, failure).
 async function shutdown(type = 'close', preserveAnswers = false) {
@@ -1758,7 +1807,7 @@ $('clearStories').addEventListener('click', async () => {
   finally { $('saveStory').disabled = $('clearStories').disabled = false; }
 });
 // Hiding or leaving closes the microphone and the session; every return prepares Chat again.
-document.addEventListener('visibilitychange', () => { if (document.visibilityState !== 'visible') shutdown('pause'); else autoPrepare(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState !== 'visible') shutdown('pause'); else { autoPrepare(); void askBuild(); } });
 window.addEventListener('pageshow', () => autoPrepare());
 window.addEventListener('pagehide', () => shutdown('close'));
 window.addEventListener('resize', () => { window.Dwell?.suppress(600); fitLabels(); });
@@ -1771,6 +1820,7 @@ const configReady = json(`${API}/config`).then(value => {
   if (wakeMode) void startEar();
 }).catch(() => { config = { runtime: { available: false } }; $('engineNote').textContent = 'Speech is unavailable. Prepared phrases and stories work.'; paintAsk(); paintWake(); });
 appReady = true;
+void askBuild(); // the build this page opened against (spec 2026-10-28 §16)
 document.body.dataset.storageReady = 'true';
 for (const id of ['desktopAsk', 'typedAsk', 'voicePreference', 'saveStory', 'clearStories', 'clearTimings']) $(id).disabled = false;
 paintAsk();

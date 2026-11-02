@@ -536,6 +536,12 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
     try { const value = typeof options.name === 'function' ? options.name() : options.name; return typeof value === 'string' && value.trim() && value.length <= 40 ? value.trim() : 'Ellie'; }
     catch { return 'Ellie'; }
   };
+  // The hub's running build (stable frame §16), passed in with the options so
+  // the page can follow it; the API never reads the updater itself. Null = unknown.
+  const runningBuild = () => {
+    try { const value = typeof options.build === 'function' ? options.build() : options.build; return typeof value === 'string' && value.trim() ? value.trim().slice(0, 40) : null; }
+    catch { return null; }
+  };
   // The family's own names (the Drawing library's people), for a who question only.
   const people = () => listFrom(options.people, 20);
   // Her world (chat-world.js): the device's digest of week packages, shelf,
@@ -685,8 +691,8 @@ function createFixedChatApi(options = {}, env = chatVariables(options.env === un
         if (event.type === 'ready') {
           session.runtimeReady = true;
           const caps = event.capabilities || {};
-          const streaming = !!session.stream;
-          emit(session, { type: 'ready', sampleRate: 16000, capabilities: {
+          const streaming = !!session.stream, build = runningBuild();
+          emit(session, { type: 'ready', sampleRate: 16000, ...(build ? { build } : {}), capabilities: {
             wake: caps.wake === true, partial: caps.partial === true || streaming, automaticEndpoint: caps.automaticEndpoint === true,
             remoteFinal: caps.remoteFinal === true, remoteStreaming: caps.remoteStreaming === true || streaming,
             audioSocket: true, stagedChoices: session.staged,

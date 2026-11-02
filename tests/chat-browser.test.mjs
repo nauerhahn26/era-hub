@@ -380,7 +380,7 @@ test('her pages: lists from settings, ten a page with More and Back, the lit rai
   assert.deepEqual(errors, []);
 });
 
-test('after a silence the options are read aloud: the name, then each label with its tile lit, three times at most; a glance never stops it, a selection does (spec 2026-10-28 §6)', { timeout: 60000 }, async t => {
+test('after a silence the options are read aloud: the name, then each label with its tile lit, twice at most; a glance never stops it, a selection does (spec 2026-10-28 §6)', { timeout: 60000 }, async t => {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-prompt-'));
   const server = serve(scratch); server.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -427,11 +427,11 @@ test('after a silence the options are read aloud: the name, then each label with
   const rolesOf = text => [...new Set(roles.filter(([said]) => said === text).map(([, role]) => role))].sort();
   assert.deepEqual(rolesOf('Sam, your options are'), ['helper']);
   for (const label of ['Music', 'A story']) assert.deepEqual(rolesOf(label), ['helper', 'her'], `"${label}": read by the helper, warmed as her pick`);
-  // Unanswered: read again after the same delay, three readings in all, then quiet (amended 10/31 night).
-  await page.waitForFunction(() => window.__plays === 9 && !document.querySelector('#grid .response.on'), null, { timeout: 30000 });
+  // Unanswered: read again after the same delay, two readings in all, then quiet (amended 10/31 night; dad 11/1: "only do 2x").
+  await page.waitForFunction(() => window.__plays === 6 && !document.querySelector('#grid .response.on'), null, { timeout: 30000 });
   await page.waitForTimeout(2500);
-  assert.equal(await page.evaluate(() => window.__plays), 9, 'three readings of a batch, then quiet');
-  assert.deepEqual(await page.evaluate(() => window.__lit), ['Music', 'A story', 'Music', 'A story', 'Music', 'A story']);
+  assert.equal(await page.evaluate(() => window.__plays), 6, 'two readings of a batch, then quiet');
+  assert.deepEqual(await page.evaluate(() => window.__lit), ['Music', 'A story', 'Music', 'A story']);
   // A new batch: a glance on a tile mid-reading (dwell progress) never stops it; a selection stops it at once.
   await page.evaluate(() => { window.__lit = []; window.__plays = 0; });
   await ask();
@@ -1143,5 +1143,73 @@ test('what the ear heard (spec 2026-10-28 §12-§13): every clip start (with its
   const lines = box.split('\n').filter(line => / ear /.test(line));
   assert.equal(lines.length, 12, box);
   assert.match(lines.at(-1), /^\d\d:\d\d:\d\d ear tier main$/);
+  assert.deepEqual(f.errors, []);
+});
+
+// Chat follows the hub's build (spec 2026-10-28 §16; dad 11/1: "Just update …
+// Reload"). The page remembers the build /version gave at open; a different
+// build from `ready`, a visibility return or the polling after a session loss
+// reloads the page (here a stub counts), after any hold in progress.
+test('Chat follows the hub\'s build (spec 2026-10-28 §16): a changed build reloads the page, the same build does not, a hold finishes first, a lost session polls /version until the hub answers and gives up after the limit', { timeout: 90000 }, async t => {
+  const f = await earFixture(t, { chatWakeMode: false });
+  const version = { build: 'build-a', status: 200, requests: 0 };
+  await f.context.addInitScript(() => { window.__reloads = 0; window.__chatFollow = { reload: () => { window.__reloads++; }, pollMs: 200, limitMs: 1500 }; });
+  await f.context.route('**/version', route => { version.requests++; return route.fulfill({ status: version.status, contentType: 'application/json', body: JSON.stringify(version.status === 200 ? { build: version.build } : { error: 'restarting' }) }); });
+  const page = await f.open({ ear: false });
+  await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Ready to ask');
+  const reloads = () => page.evaluate(() => window.__reloads);
+  const settle = async (ms = 400) => { await page.waitForTimeout(ms); };
+  const until = async (check, what, ms = 3000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await check()) return; await page.waitForTimeout(20); } assert.fail(what); };
+  // At open the page asked /version once and keeps that build; the same build in `ready` changes nothing.
+  assert.equal(version.requests, 1, 'the page asked the hub\'s build once at open');
+  await f.emit(page, { type: 'ready', build: 'build-a', capabilities: { remoteStreaming: true, audioSocket: true, stagedChoices: true } });
+  await settle(); assert.equal(await reloads(), 0, 'the same build never reloads');
+  // A hold in progress: a visibility return finds a new build; the reload waits for the turn's end.
+  const cdp = await f.context.newCDPSession(page);
+  const box = await page.locator('#ask').boundingBox(); assert.ok(box);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: box.x + box.width / 2, y: box.y + box.height / 2, id: 1 }] });
+  await page.waitForFunction(() => document.body.dataset.capturing === 'true');
+  version.build = 'build-b';
+  const asked = version.requests;
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await until(() => version.requests > asked, 'a visibility return asks the build again');
+  await settle(); assert.equal(await reloads(), 0, 'no reload under a hold');
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await until(async () => f.controls.some(body => body.type === 'finish'), 'the hold finished');
+  await settle(); assert.equal(await reloads(), 0, 'no reload while the question is still being sent');
+  await f.emit(page, { type: 'final', generation: f.EAR, text: 'Would you like music or a story?' });
+  await f.emit(page, { type: 'batch-sealed', generation: f.EAR, kind: 'generated', choices: [{ label: 'Music', say: 'Music' }, { label: 'A story', say: 'A story' }] });
+  await page.waitForFunction(() => document.querySelector('#phase').textContent === 'Your turn');
+  await until(async () => (await reloads()) === 1, 'the reload came with the turn\'s end');
+  // A session loss on the same build: one answer, no reload, no more asking.
+  version.build = 'build-a';
+  let before = version.requests;
+  await page.evaluate(() => window.__socket.onclose());
+  await until(() => version.requests === before + 1, 'the loss asks the build');
+  await settle(800); assert.equal(version.requests, before + 1, 'the hub answered: no more asking'); assert.equal(await reloads(), 1);
+  // A new session; a loss while the hub is restarting: asked every poll until it answers with a new build, then the reload and no more asking.
+  async function reopen() {
+    await page.evaluate(() => { window.__oldEvents = window.__events; window.__oldSocket = window.__socket; document.dispatchEvent(new Event('visibilitychange')); });
+    await page.waitForFunction(() => window.__events && window.__events !== window.__oldEvents && !window.__events.closed);
+    await f.emit(page, { type: 'ready', capabilities: { remoteStreaming: true, audioSocket: true, stagedChoices: true } });
+    await page.waitForFunction(() => document.querySelector('#ask').textContent === 'Hold to ask' && !document.querySelector('#ask').disabled && window.__socket !== window.__oldSocket && window.__socket.readyState === 1);
+  }
+  await reopen();
+  version.status = 503; before = version.requests;
+  await page.evaluate(() => window.__socket.onclose());
+  await settle(700); assert.ok(version.requests >= before + 3, `asked every poll while the hub is away: ${version.requests - before}`);
+  version.status = 200; version.build = 'build-b';
+  await until(async () => (await reloads()) === 2, 'the new build reloads the page');
+  const after = version.requests; await settle(600); assert.equal(version.requests, after, 'no more asking after the answer');
+  // A new session; `ready` with a new build reloads at once; a loss with the hub away for longer than the limit stops asking.
+  version.build = 'build-a'; await reopen();
+  await f.emit(page, { type: 'ready', build: 'build-b', capabilities: { remoteStreaming: true, audioSocket: true, stagedChoices: true } });
+  await until(async () => (await reloads()) === 3, 'ready with a new build reloads');
+  version.status = 503; before = version.requests;
+  await page.evaluate(() => window.__socket.onclose());
+  await settle(2500);
+  const gaveUp = version.requests; assert.ok(gaveUp - before >= 5 && gaveUp - before <= 10, `asked until the limit: ${gaveUp - before}`);
+  version.status = 200; version.build = 'build-b'; await settle(600);
+  assert.equal(version.requests, gaveUp, 'no asking after the limit'); assert.equal(await reloads(), 3);
   assert.deepEqual(f.errors, []);
 });

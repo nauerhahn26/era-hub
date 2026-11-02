@@ -31,6 +31,7 @@ const { createChatTurns, applyTestModeSetting, applyLikesSetting, applyListsSett
 // people still on her board (the list chat-symbols.setPeople pictures).
 const chatApi = require("./chat-api.js").createChatApi({ reportUsage: () => testModeOn(DATA), likes: () => chatLikes(DATA),
   name: () => chatPrompt(DATA).chatName, // the wake name (stable frame §8)
+  build: () => updater.runningBuild, // Chat follows the hub's build (stable frame §16): `ready` carries it
   // The ear's cost (§10): its idle time, and the saved switch turned off when it goes idle.
   wakeIdleMs: () => chatWake(DATA).chatWakeIdleMs, onWakeIdle: () => wakeModeOff(DATA),
   engageMs: () => chatWake(DATA).chatEngageMs, // the two tiers: how long the main stream stays on after a wake

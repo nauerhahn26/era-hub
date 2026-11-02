@@ -126,8 +126,10 @@ options until she makes a selection"): dwell progress on a tile neither
 cancels the timer nor the reading; until 10/31 it did. The reading never
 blocks her: a dwell during it selects as usual, and the selection stops the
 reading. YES and NO are not read. After a full reading the timer re-arms
-with the same delay, so an unanswered batch is read again, up to three
-readings per batch (then quiet; the partner can repeat the question). The
+with the same delay, so an unanswered batch is read again, up to two
+readings per batch (then quiet; a look at the question strip repeats it, §15,
+and the partner can repeat the question). Three until 11/1; dad: "only do
+2x". The
 turn record (test mode) gains `content.prompted: true` when a reading started
 (and `content.readings: n`) and keeps `selected` as usual, so prompted turns
 can be compared.
@@ -366,3 +368,34 @@ closes as idle on its first tick; the partner's off, the idle off and the
 partner's own switch-on (`window {ear:true, fresh:true}`) start anew, and a
 hold or press with no ear open restarts it. A session that ends with its ear
 on writes `off (ended)`.
+
+## 16. Chat follows the hub's build (dad, 11/1 afternoon: "Just update … Reload")
+
+An open Chat page keeps the code it loaded with. Until 11/1 a hub self-update
+restarted the hub under it, and the page ran the old page against the new hub
+until someone closed it and reopened it from the Dashboard tile (the 10/31
+push left the home device on an old page for hours). Dad's decisions, 11/1:
+the hub updates whenever an update is there, Chat in use or not ("Just
+update"), and Chat reloads itself to the new build ("Reload").
+
+- The page learns the hub's build from `GET /version` (`build`) when it
+  opens and remembers it as the page's own build. The session `ready` event
+  carries `build` too (the hub passes its running build into the chat API
+  with its other options; the chat API never reads the updater itself).
+- The page asks again (a) when a session is lost or its socket closes (the
+  hub restarted: it asks every 5 s until the hub answers, for up to 3 min),
+  (b) when `ready` arrives, (c) when the page becomes visible again. A
+  different build means the hub was updated: the page reloads itself
+  (`location.reload()`), which loads the new page and its saved settings
+  (the Listen switch, test mode, her pages) as any reopen would. The same
+  build means a plain restart: today's behaviour, nothing reloads.
+- A reload never cuts a hold or a press capture: while one is active the
+  reload waits for its end (the turn finishes on the old page, then the
+  page reloads). A reading in progress or replies on screen do not delay it
+  (dad: "just update"); they are lost with the page, as they would be on a
+  reopen.
+- No new record. The turn log's per-build summary already separates builds.
+- Tests first: the hub's `ready` carries the build it was given
+  (chat-ear-hub or chat-api suite); the page reloads on a changed build and
+  not on the same one, waits for an active hold, and stops asking after 3
+  min (chat-browser, with `location.reload` stubbed).
