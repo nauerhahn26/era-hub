@@ -95,13 +95,20 @@ Branch `feat/clothing-morning-weather`, worktree `era-hub--wt-clothing-morning-w
 
 ### Phase 4 — behavioural verification (mandatory)
 
-- [ ] T8 A scratch hub on a free 8380-8389 port with `ERA_WEATHER_URL` pointed at a fake Open-Meteo
+- [x] T8 A scratch hub on a free 8380-8389 port with `ERA_WEATHER_URL` pointed at a fake Open-Meteo
       serving today's real shape (52 at 8, rising to 67 at 13, 65 at 14) and a fixture wardrobe with a
       sweater, a long sleeve, two tees, a tank, pants, fleece pants, shorts, a jacket: the built
       `recipes/today.json` shows the tile `52° → 67°  cool`, page 1 holds no tank, pants outnumber
       shorts, the tops grid leads with the sweater, the jacket grid leads with the warmest jacket.
       Then the same hub with 60 at 8 / 75 at 13: tile `60° → 75°  warm`, shorts on page 1. One
       screenshot of each tile into the scratchpad (not the repo). Kill only the recorded hub pid.
+      Scratch hub 8383 + fake forecast 8384, 10-piece fixture (sweater, light long sleeve, two tees,
+      tank, light pants, fleece, shorts, coat, shell). 52/67 day: tile `52° → 67°  cool`; page 1 =
+      7 pants looks + 1 shorts, no tank (whole deal 12 looks: 4 shorts, 0 tank); tops grid longsleeve,
+      sweater, tee1, tee2, tank — the LIGHT long sleeve (67.5) leads at 62, the sweater second (it
+      ties the tees at 14 and wins on id); jackets coat, shell. 60/75 day: tile `60° → 75°  warm`;
+      page 1 = 4 shorts + 4 pants, 2 tank looks; tops longsleeve, tee1, tee2, tank, sweater; jackets
+      coat, shell (the 60 °F morning is cool). Both pids killed by number.
 - [ ] T9 Full gate detached (`setsid nohup bash tools/era-gate.sh`), pid recorded, one
       `bash tools/gate-wait.sh <pid> --timeout 570` (again if 124). Tick with the receipt line.
 
