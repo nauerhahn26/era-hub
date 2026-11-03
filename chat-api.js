@@ -452,7 +452,7 @@ function localChoices(text) {
     return null;
   }
   if (/^(?:is|are|was|were|do|does|did|can|could|would|will|have|has|should|may)\b/i.test(trimmed) && !severalQuestions(text))
-    return { kind: 'yes-no', choices: choiceList(['Yes', 'No', "I'm not sure", 'Please say that again']) };
+    return { kind: 'yes-no', choices: choiceList(['Yes', 'No']) }; // Yes and No alone (stable frame §17): Something else and the question strip cover the rest
   if (/^(hi|hello|hey)(?:\b|!)/i.test(trimmed))
     return { kind: 'comments', choices: choiceList(['Hello!', "It's good to see you", 'How are you?']) };
   if (/^how are you\b/i.test(trimmed))

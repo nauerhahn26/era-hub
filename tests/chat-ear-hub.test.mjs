@@ -461,7 +461,7 @@ test('a yes-or-no question: the local set is sealed at once, then the answers in
   await until(() => s.events('batch-sealed').length === 1);
   const batch = s.events('batch-sealed')[0];
   assert.equal(batch.kind, 'yes-no');
-  assert.deepEqual(s.events('choice-staged').map(e => e.choice.label), ['Yes', 'No', "I'm not sure", 'Please say that again']);
+  assert.deepEqual(s.events('choice-staged').map(e => e.choice.label), ['Yes', 'No']);
   await until(() => model.gates.length === 1);
   assert.equal(s.events('yes-no-answered').length, 0, 'the seal never waits for the answers');
   const input = JSON.parse(model.answers()[0].input);

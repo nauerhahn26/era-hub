@@ -444,7 +444,7 @@ test('with no end of turn from the service, 1.5 s of real quiet after speech sea
   await f.restOffTiles();
   f.ask();
   await f.page.waitForSelector('.response', { timeout: 20000 });
-  assert.deepEqual(await f.page.locator('.response .label').allTextContents(), ['Yes', 'No', "I'm not sure", 'Please say that again']);
+  assert.deepEqual(await f.page.locator('.response .label').allTextContents(), ['Yes', 'No']);
   assert.equal(await f.page.evaluate(() => document.body.dataset.listening), 'true', 'sealed by the quiet, not by the window closing');
 });
 
@@ -709,7 +709,7 @@ test('her options are not read while a window listens; the reading counts from t
   await f.page.waitForFunction(n => window.__plays > n, before, { timeout: 5000 });
   assert.ok(Date.now() - closedAt >= 600, `the reading began ${Date.now() - closedAt} ms after the close: the delay counted from the close`);
   await f.page.waitForFunction(() => document.querySelector('.tile.response.on'), null, { timeout: 5000 });
-  assert.ok(['Yes', 'No', "I'm not sure", 'Please say that again'].includes((await litLabels(f.page))[0]), 'each option lights while it is read');
+  assert.ok(['Yes', 'No'].includes((await litLabels(f.page))[0]), 'each option lights while it is read');
   assert.equal(f.api.window(), null, 'the hub had closed the window before anything was spoken');
   assert.deepEqual(f.errors, []);
 });

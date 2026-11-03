@@ -718,9 +718,11 @@ hidden half hour, 5 "Reload". Only 3 and 5 change code.
       for the browser case; chat-api 69/69, chat-browser 17/17.
 
 ## Yes and No alone + a softer reading (dad, 11/2 night) — spec §17, §18
-- [ ] Y4 hub: the yes-or-no local set is Yes and No (spec §17); the tests
+- [x] Y4 hub: the yes-or-no local set is Yes and No (spec §17); the tests
       that pin four items say two (chat-api, chat-ear-hub, chat-pictures,
-      chat-browser, chat-commands-browser).
+      chat-browser, chat-commands-browser). Built 11/2: one line in
+      chat-api.js; the frame already lays two across both rows (chat-frame);
+      the §11 browser case merges the full answers into the two in place.
 - [ ] V1 page + hub: the reading plays at `chatReadVolume` % (spec §18):
       setting 40–100 default 60 in chat-turns beside chatPromptMs, the
       partner select "Her options are read at", `voice.say({ volume })`

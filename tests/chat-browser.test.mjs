@@ -1015,12 +1015,11 @@ test('Yes and No in full (spec 2026-10-28 §11): the phrases land in place with 
   await f.context.route('**/symbol/**', route => route.fulfill({ status: 200, contentType: 'image/png', body: png }));
   await f.context.route('**/chat/api/turns', route => { try { const body = route.request().postDataJSON(); if (body) records.push(body); } catch {} return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }); });
   const page = await f.open();
-  const YES_NO = [{ label: 'Yes', say: 'Yes.', symbol: 'yes', symbolId: 5584 }, { label: 'No', say: 'No.', symbol: 'no', symbolId: 5526 },
-    { label: "I'm not sure", say: "I'm not sure.", symbol: 'not sure', symbolId: 11696 }, { label: 'Please say that again', say: 'Please say that again.', symbol: 'say again' }];
+  const YES_NO = [{ label: 'Yes', say: 'Yes.', symbol: 'yes', symbolId: 5584 }, { label: 'No', say: 'No.', symbol: 'no', symbolId: 5526 }]; // Yes and No alone (§17)
   async function ask(id, text) {
     await f.emit(page, { type: 'utterance-sealed', ear: true, earId: 'ear-1', windowId: id, seq: 1, text, windowText: text, generation: f.EAR });
     await f.emit(page, { type: 'batch-sealed', generation: f.EAR, windowId: id, seq: 1, kind: 'yes-no', choices: YES_NO });
-    await page.waitForFunction(() => document.querySelectorAll('#grid .tile.response').length === 4 && document.querySelector('#grid .tile.response .label').textContent === 'Yes');
+    await page.waitForFunction(() => document.querySelectorAll('#grid .tile.response').length === 2 && document.querySelector('#grid .tile.response .label').textContent === 'Yes');
   }
   const answer = (id, feeling = 'hungry', words = ["Yes, I'm hungry", "No, I'm not hungry"]) => ({ type: 'yes-no-answered', generation: f.EAR, windowId: id, seq: 1, feeling,
     yes: { label: words[0], say: words[0], ...(feeling ? { symbol: feeling, symbolId: 4962 } : {}) }, no: { label: words[1], say: words[1], ...(feeling ? { symbol: feeling, symbolId: 4962 } : {}) } });
@@ -1043,11 +1042,11 @@ test('Yes and No in full (spec 2026-10-28 §11): the phrases land in place with 
   // Another question's answers change nothing; this question's change only the Yes and No, in place.
   await f.emit(page, answer('w-other'));
   await page.waitForTimeout(100);
-  assert.deepEqual(await labels(), ['Yes', 'No', "I'm not sure", 'Please say that again']);
+  assert.deepEqual(await labels(), ['Yes', 'No']);
   const kept = await page.evaluate(() => { window.__kept = [...document.querySelectorAll('#grid .tile')]; return window.__kept.length; });
   await f.emit(page, answer('w-1'));
   await page.waitForFunction(() => document.querySelector('#grid .tile.response .label').textContent === "Yes, I'm hungry");
-  assert.deepEqual(await labels(), ["Yes, I'm hungry", "No, I'm not hungry", "I'm not sure", 'Please say that again']);
+  assert.deepEqual(await labels(), ["Yes, I'm hungry", "No, I'm not hungry"]);
   assert.ok(await page.evaluate(n => document.querySelectorAll('#grid .tile').length === n && window.__kept.every(el => el.isConnected), kept), 'no tile was redrawn');
   await page.waitForFunction(() => [...document.querySelectorAll('#grid .chat-badge')].every(img => img.complete));
   const yes = await tileOf('yes'), no = await tileOf('no');
@@ -1067,7 +1066,7 @@ test('Yes and No in full (spec 2026-10-28 §11): the phrases land in place with 
   await reply('No').click(); await lastSpoken('No.');
   await f.emit(page, answer('w-2', null, ["Yes, it's raining", "No, it isn't"]));
   await page.waitForTimeout(150);
-  assert.deepEqual(await labels(), ['Yes', 'No', "I'm not sure", 'Please say that again']);
+  assert.deepEqual(await labels(), ['Yes', 'No']);
   await page.locator('#grid .tile.yes').click(); await lastSpoken('Yes.');
   // A bare Yes and No (one word each) is no answer in full: nothing changes and the record does not say answered.
   await ask('w-bare', 'is your tummy okay?');
@@ -1094,7 +1093,7 @@ test('Yes and No in full (spec 2026-10-28 §11): the phrases land in place with 
   // Back: the earlier batch returns plain.
   await page.locator('#back').click();
   await page.waitForFunction(() => document.querySelector('#grid .tile.response .label')?.textContent === 'Yes');
-  assert.deepEqual(await labels(), ['Yes', 'No', "I'm not sure", 'Please say that again']);
+  assert.deepEqual(await labels(), ['Yes', 'No']);
   // Something else while the answers are still coming: the hub is told to drop them, and late ones change nothing.
   await ask('w-4', 'are you tired?');
   await page.locator('#grid .tile.static', { hasText: 'Something else' }).click();

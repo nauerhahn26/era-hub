@@ -126,8 +126,7 @@ test('shortcuts and guarded templates carry curated pictures with their ids', as
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })).json()).choices;
   const pairs = choices => choices.map(choice => [choice.say, choice.symbol, choice.symbolId]);
   const id = word => byWord.get(word).id;
-  assert.deepEqual(pairs(await ask('Did you enjoy that?')), [['Yes', 'yes', id('yes')], ['No', 'no', id('no')],
-    ["I'm not sure", 'not sure', id('not sure')], ['Please say that again', 'say again', id('say again')]]);
+  assert.deepEqual(pairs(await ask('Did you enjoy that?')), [['Yes', 'yes', id('yes')], ['No', 'no', id('no')]], 'Yes and No alone (stable frame §17)');
   assert.deepEqual(pairs(await ask('Hello!')).map(row => row[1]), ['hello', 'happy', 'feelings']);
   assert.deepEqual(pairs(await ask('Would you like music or a story?')).map(row => row[1]), ['music', 'book']);
   assert.deepEqual(pairs(await ask('Were you at school or at home?')).map(row => row[1]), ['clue', 'different', 'not now']);
@@ -258,7 +257,7 @@ test('a hub installed without the vocabulary file still boots and answers /statu
   }
   assert.equal(status, 200, 'the hub serves /status: ' + stderr.slice(0, 400));
   const reply = await (await fetch(`http://127.0.0.1:${port}/chat/api/choices`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'Did you like it?' }) })).json();
-  assert.deepEqual(reply.choices.map(choice => choice.say), ['Yes', 'No', "I'm not sure", 'Please say that again']);
+  assert.deepEqual(reply.choices.map(choice => choice.say), ['Yes', 'No']);
 });
 
 test('the payload ships the vocabulary with the Chat page', () => {
