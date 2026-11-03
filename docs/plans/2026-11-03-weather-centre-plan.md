@@ -48,7 +48,7 @@ Branch `feat/weather-centre`, worktree `era-hub--wt-weather-centre` (from master
 
 ### Phase 1 — the tile everywhere (posture: implementing)
 
-- [ ] T1 `tests/clothing-accessories.test.mjs`: under `underSky(allDayAt(72))` with a
+- [x] T1 `tests/clothing-accessories.test.mjs`: under `underSky(allDayAt(72))` with a
       wardrobe of ≥ 17 tops and `{ jacket: 1 }` plus one fancy piece: (a) EVERY 3×4
       board in the recipe (`rows 3, columns 4`: today pages, `build`, `acc`, every
       `cat_*` page incl. a `_2`, every `acc_*` incl. Dress up) has the weather tile at
@@ -59,16 +59,31 @@ Branch `feat/weather-centre`, worktree `era-hub--wt-weather-centre` (from master
       exactly where the no-sky case puts them; (d) `choose_bottom` is unchanged (2×2,
       four buttons, no footnote). Then the no-sky mirror: the same walk asserts `[2,2]`
       and `[2,3]` undefined on every 3×4 board. Red first on (a).
-- [ ] T2 `clothing-worker.js`: lift the today loop's tile into `weatherTile(w)` (one
+      Two cases added after the approved-layout case (one wardrobe built twice, sky and no
+      sky, 17 tops + 1 jacket + a fancy dress; the tile is also `deepEqual` to today's and
+      each page has exactly one button more than its offline twin). Red on (a):
+      `build: the weather stands in the middle` (# pass 33 / # fail 1; the no-sky mirror
+      was green from the start, as expected).
+- [x] T2 `clothing-worker.js`: lift the today loop's tile into `weatherTile(w)` (one
       object, built once per build and pushed by reference or spread — identical
       fields); the today loop pushes it as before; `gridPages` takes `w` (or the tile)
       and pushes it on every page when present; `build` and `acc` push it too;
       `choose_bottom` untouched. Comments name dad's 11/3 words and the 11/3 amendment
       of the 9/3 law. Verify: `node --test tests/clothing-accessories.test.mjs`.
-- [ ] T3 `tests/clothing-weather.test.mjs`: on the standard build the `cat_top` tile
+      **# pass 34 / # fail 0.** `weatherTile(w)` sits above `FIRST_SLOTS`, built once as
+      `tile` in `buildCataloged`; `gridPages(..., extra, tile)` pushes it last on every page,
+      `build` and `acc` push it last; the today loop pushes it first as before. Offline
+      proof: the same 35-piece fixture (9 jackets, shoes, a fancy dress) built with no sky
+      on 7244464's worker and on this one gives byte-identical `recipes/today.json`
+      (`cmp`, 69871 bytes). Neighbour check `node --test tests/clothing.test.mjs`: # pass 36 /
+      # fail 0.
+- [x] T3 `tests/clothing-weather.test.mjs`: on the standard build the `cat_top` tile
       reads `55° → 67°  cool` and `gridIds("cat_top")` is unchanged (garments only).
       Red first, then green with no code change expected beyond T2.
       Verify: `node --test tests/clothing-weather.test.mjs`.
+      Red against the pre-T2 worker (T2 was already written, so the old file was put back
+      for the run): `the weather stands in the middle of the Tops grid`. Green:
+      **# pass 38 / # fail 0**; the 11/1 `gridIds` cases unchanged.
 
 ### Gate: review (phase boundary)
 
@@ -78,12 +93,22 @@ Branch `feat/weather-centre`, worktree `era-hub--wt-weather-centre` (from master
 
 ### Phase 2 — behavioural verification (mandatory)
 
-- [ ] T5 Scratch hub on a free 8380-8389 port with a fake forecast (the 11/2 shape,
+- [x] T5 Scratch hub on a free 8380-8389 port with a fake forecast (the 11/2 shape,
       52 at 8 rising to 67 at 13) and a fixture wardrobe: built `recipes/today.json`
       shows the tile at [2,2] on `cat_top`, `cat_top_2`, `build`, `acc`, `acc_jacket`;
       then one screenshot each of the Tops page and Full wardrobe in the board
       (playwright from `tests/`, page `/board/?recipe=...` as the 11/2 proof did) into
       the scratchpad, showing the weather in the middle. Kill only the recorded pids.
+      Scratch hub 8383 + fake forecast 8384 (52 at 8, 55/58/61/64 to 67 at 13, 65 after;
+      default 10 AM-2 PM window), fixture `synthetic-wardrobe.mjs --materialize … 35
+      --accessories jacket=2` + one dress marked fancy (17 tops). Board built (37 boards):
+      `today`, `today_2`, `today_3`, `build`, `acc`, `cat_top`, `cat_top_2`, `cat_top_3`,
+      `cat_pants`, `cat_shorts`, `cat_dress`, `cat_outfit`, `acc_jacket`, `acc_fancy` each
+      carry the tile at [2,2] span 2, `[2,3]` empty, the JSON identical to `today`'s
+      (`52° → 67°  cool`, "This morning it is about 52 degrees, warming to 67. Dress for
+      cool."). Screenshots (1280x800, `Board.show(id)` since `?board=` refuses `_`) of Tops
+      and Full wardrobe in the scratchpad show the tile across the centre pair. Both node
+      pids killed by number.
 - [ ] T6 Full gate detached (`setsid nohup bash tools/era-gate.sh`), real pid from
       `/tmp/era-gate-slots/`, one `bash tools/gate-wait.sh <pid> --timeout 570` (again
       if 124). Tick with the receipt line.
