@@ -113,9 +113,11 @@ Branch `feat/weather-centre`, worktree `era-hub--wt-weather-centre` (from master
       cool."). Screenshots (1280x800, `Board.show(id)` since `?board=` refuses `_`) of Tops
       and Full wardrobe in the scratchpad show the tile across the centre pair. Both node
       pids killed by number.
-- [ ] T6 Full gate detached (`setsid nohup bash tools/era-gate.sh`), real pid from
+- [x] T6 Full gate detached (`setsid nohup bash tools/era-gate.sh`), real pid from
       `/tmp/era-gate-slots/`, one `bash tools/gate-wait.sh <pid> --timeout 570` (again
       if 124). Tick with the receipt line.
+      **208 passed, 0 failed** on 7d43347 (run `2026-11-03T19-17-33Z-367b3c7`, 0 reused; stamp
+      `/tmp/era-gate-green/367b3c72244d79e999928d09defe8e60a9fc536f`).
 
 ### Phase 3 — ship (on dad's word only)
 
