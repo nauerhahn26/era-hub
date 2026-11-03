@@ -87,9 +87,13 @@ Branch `feat/weather-centre`, worktree `era-hub--wt-weather-centre` (from master
 
 ### Gate: review (phase boundary)
 
-- [ ] T4 Overseer review of the diff against spec §2: one tile, every 3×4 page, nothing
+- [x] T4 Overseer review of the diff against spec §2: one tile, every 3×4 page, nothing
       moved, offline identical. Focused run:
       `node --test tests/clothing-accessories.test.mjs tests/clothing-weather.test.mjs tests/clothing.test.mjs tests/clothing-rank.test.mjs tests/clothing-fit.test.mjs tests/clothing-variety.test.mjs tests/clothing-diversity.test.mjs`
+      Review 11/3: `weatherTile(w)` is the today loop's object moved verbatim, built once and
+      pushed by reference on every 3×4 page (nothing downstream mutates a button, checked);
+      `choose_bottom` untouched; offline recipe byte-identical (builder's `cmp`). Focused run:
+      `# pass 323 / # fail 0`. Screenshots of Tops and Full wardrobe show the tile in the middle.
 
 ### Phase 2 — behavioural verification (mandatory)
 
@@ -121,4 +125,11 @@ Branch `feat/weather-centre`, worktree `era-hub--wt-weather-centre` (from master
 
 ## Retrospective
 
-(filled at the end)
+- The board's `?board=` deep link accepts only `[a-z0-9-]`, so a picker page (`cat_top`) cannot be
+  opened by URL; the proof used `window.Board.show(id)`. Worth knowing for any future screenshot proof.
+- Full wardrobe with the weather in its centre shows a black bottom row under a full middle row;
+  it reads top-heavy. Design point for dad, not a bug.
+- The tile's footnote is cut off on the board ("updated Tue, Nov 3, 7:0…") exactly as on the today
+  page since 9/23; not new, not touched.
+- One tile object is shared by reference across boards; fine today because nothing mutates buttons
+  after the build. A future per-board mutation would have to spread it.
