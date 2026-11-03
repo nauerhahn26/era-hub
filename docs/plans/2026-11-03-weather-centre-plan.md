@@ -1,0 +1,99 @@
+# Clothing Picker — the weather in the middle (plan)
+
+Design: [2026-11-03-weather-centre-design.md](../specs/2026-11-03-weather-centre-design.md).
+Branch `feat/weather-centre`, worktree `era-hub--wt-weather-centre` (from master fc722ed), era-hub only.
+
+## Preflight (verified against this tree, b35393f)
+
+- The weather tile is built inline in the today loop of `buildCataloged`
+  (`clothing-worker.js` ~1715-1760: `twoNumbers`, `span`, `lead`, label, say, footnote,
+  `row: 2, col: 2, col_span: 2`). It depends only on `w`. `gridPages(id, name, items,
+  backLoad, extra)` (~1581) builds every browse page; `build` (~1806), `acc` (~1818)
+  and `choose_bottom` (~1826, 2×2) are built inline after it. `w` is in scope for all
+  of them (`const w = known || await weather()` ~1643).
+- `tests/clothing-accessories.test.mjs`: all six centre-black assertions (lines 688, 723,
+  748, 757, 775, 1065) build with NO sky (seam `ERA_WEATHER_URL` 127.0.0.1:1), so they
+  keep holding: no forecast, black centre. The "approved layout" case (~1085) builds
+  under `underSky(allDayAt(72))` and already pins the tile on today pages by
+  `footnote != null`, `row 2 / col 2 / col_span 2`, no `load`, no `combo`, plus the
+  overlap walk — the shape to reuse. Helpers: `at(board,row,col)` matches exact
+  row/col (a span-2 tile is found at [2,2], and [2,3] stays `undefined` — pin that
+  deliberately, it is how the old black-centre asserts read); `boardOf`, `pagesOf`,
+  `cellsOf(board,type)`.
+- `tests/clothing.test.mjs:359` checks only `type === "outfit"` tiles: unaffected.
+- `tests/clothing-weather.test.mjs gridIds` filters `type === "clothing"`: unaffected.
+  Its fake forecast (`hourly()`, 55 at 8 / 67 at noon, default window) gives the tile
+  `55° → 67°  cool` — the label to pin on a browse page there.
+- The renderer draws any `col_span` control (`public/board/board-render.js` 341, 534,
+  929); nothing in era-board changes. No suite to register (`clothing-accessories`,
+  `clothing-weather`, `clothing` are in `tools/testing/registry.json`).
+- The 11/2 scratch-hub proof used a fake Open-Meteo on 8384 + hub on 8383
+  (`ERA_WEATHER_URL`, `ERA_TEST_PORT`); its shape is in the 11/2 plan's T8 tick.
+
+## Guardrails (every task)
+
+- **Test first**: the test is written and seen red before the code; the tick quotes the
+  red message. No task ticks without its test.
+- **Verify** with the named command; paste the summary line into the tick.
+- **STOP and report** rather than improvise when: a suite outside the ones named goes
+  red; any garment, Back, More or the door changes cell; the tile's words differ from
+  the today page's on the same build; the offline recipe is not byte for byte the old
+  one; the tile would need a `load` or any new field.
+- No family names, towns, IPs, device ids; no AI vendor or model names, in code, tests,
+  docs or commits. Commits by the user, no trailers.
+- Worktree only; never the main checkout; never the live hub on 8377; test hubs
+  8380-8389 after `ss -ltn`.
+
+## Tasks
+
+### Phase 1 — the tile everywhere (posture: implementing)
+
+- [ ] T1 `tests/clothing-accessories.test.mjs`: under `underSky(allDayAt(72))` with a
+      wardrobe of ≥ 17 tops and `{ jacket: 1 }` plus one fancy piece: (a) EVERY 3×4
+      board in the recipe (`rows 3, columns 4`: today pages, `build`, `acc`, every
+      `cat_*` page incl. a `_2`, every `acc_*` incl. Dress up) has the weather tile at
+      `[2,2]` with `col_span 2`, `type "control"`, no `load`, no `combo`, the same
+      `say` and `footnote` as `today`'s tile, and `[2,3]` undefined; (b) the overlap
+      walk from the approved-layout case passes on every one of them; (c) on `cat_top`
+      the seven/eight garment cells, Back [1,1], More [3,1] and the door [3,4] are
+      exactly where the no-sky case puts them; (d) `choose_bottom` is unchanged (2×2,
+      four buttons, no footnote). Then the no-sky mirror: the same walk asserts `[2,2]`
+      and `[2,3]` undefined on every 3×4 board. Red first on (a).
+- [ ] T2 `clothing-worker.js`: lift the today loop's tile into `weatherTile(w)` (one
+      object, built once per build and pushed by reference or spread — identical
+      fields); the today loop pushes it as before; `gridPages` takes `w` (or the tile)
+      and pushes it on every page when present; `build` and `acc` push it too;
+      `choose_bottom` untouched. Comments name dad's 11/3 words and the 11/3 amendment
+      of the 9/3 law. Verify: `node --test tests/clothing-accessories.test.mjs`.
+- [ ] T3 `tests/clothing-weather.test.mjs`: on the standard build the `cat_top` tile
+      reads `55° → 67°  cool` and `gridIds("cat_top")` is unchanged (garments only).
+      Red first, then green with no code change expected beyond T2.
+      Verify: `node --test tests/clothing-weather.test.mjs`.
+
+### Gate: review (phase boundary)
+
+- [ ] T4 Overseer review of the diff against spec §2: one tile, every 3×4 page, nothing
+      moved, offline identical. Focused run:
+      `node --test tests/clothing-accessories.test.mjs tests/clothing-weather.test.mjs tests/clothing.test.mjs tests/clothing-rank.test.mjs tests/clothing-fit.test.mjs tests/clothing-variety.test.mjs tests/clothing-diversity.test.mjs`
+
+### Phase 2 — behavioural verification (mandatory)
+
+- [ ] T5 Scratch hub on a free 8380-8389 port with a fake forecast (the 11/2 shape,
+      52 at 8 rising to 67 at 13) and a fixture wardrobe: built `recipes/today.json`
+      shows the tile at [2,2] on `cat_top`, `cat_top_2`, `build`, `acc`, `acc_jacket`;
+      then one screenshot each of the Tops page and Full wardrobe in the board
+      (playwright from `tests/`, page `/board/?recipe=...` as the 11/2 proof did) into
+      the scratchpad, showing the weather in the middle. Kill only the recorded pids.
+- [ ] T6 Full gate detached (`setsid nohup bash tools/era-gate.sh`), real pid from
+      `/tmp/era-gate-slots/`, one `bash tools/gate-wait.sh <pid> --timeout 570` (again
+      if 124). Tick with the receipt line.
+
+### Phase 3 — ship (on dad's word only)
+
+- [ ] T7 Land (`worktree.sh sync` first if master moved; re-gate; `worktree.sh land`);
+      patch build + push to the device dad names; release when he says. None without
+      his word.
+
+## Retrospective
+
+(filled at the end)
