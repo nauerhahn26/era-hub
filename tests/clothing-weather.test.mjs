@@ -45,12 +45,22 @@ let aiCalls = 0;
 // The day is TODAY in the zone the build reads in (UPDATED 10/10, spec §7.1):
 // the window is read out of a stored week by date now, so the fixed 9/5 this
 // used to carry would be a day the build never reads.
+//
+// ADDED 11/2 (the morning counts, spec 2026-11-02 §3): the leave-the-house
+// hour (default 8 AM) is read as well as the window, so the 55 °F at hour 8 is
+// the MORNING and every window that starts after it plans two thirds of the way
+// from 55 to its warmest hour. `SKIP_HOUR` drops one hour from the series (the
+// no-morning fallback) and `TEMP_AT` replaces the day for one test; both are
+// reset after every test that sets them.
+let SKIP_HOUR = null, TEMP_AT = null;
 function hourly() {
   const time = [], temperature_2m = [], weather_code = [];
   const day = require("./clothing-rank.js").dayKey(Date.now(), "America/Los_Angeles");
   for (let h = 0; h < 24; h++) {
+    if (h === SKIP_HOUR) continue;
     time.push(day + "T" + String(h).padStart(2, "0") + ":00");
-    temperature_2m.push(h === 9 ? 64 : h === 10 ? 66 : h === 11 ? 65 : h === 12 ? 67
+    temperature_2m.push(TEMP_AT ? TEMP_AT(h)
+                      : h === 9 ? 64 : h === 10 ? 66 : h === 11 ? 65 : h === 12 ? 67
                       : h === 16 ? 80 : h >= 13 ? 70 : 55);
     weather_code.push(h === 9 ? 61 : 0);
   }
@@ -65,9 +75,10 @@ function makeJpg(file, r, g, b) {
   fs.writeFileSync(file, jpeg.encode({ data, width: w, height: h }, 85).data);
 }
 
-function setWindow(win) {
+// `more`: other app-settings keys beside the window (11/2: weatherLeaveAt)
+function setWindow(win, more = {}) {
   fs.writeFileSync(path.join(TMP, "app-settings.json"),
-    JSON.stringify(win === null ? {} : { weatherWindow: win }, null, 1));
+    JSON.stringify(win === null ? { ...more } : { weatherWindow: win, ...more }, null, 1));
 }
 function tile() {
   const r = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
@@ -129,6 +140,17 @@ before(async () => {
   makeJpg(path.join(TMP, "wardrobe-items", "item_warmtop.jpg"), 80, 180, 100);
   makeJpg(path.join(TMP, "wardrobe-items", "item_hotbot.jpg"), 240, 200, 40);
   makeJpg(path.join(TMP, "wardrobe-items", "item_coldbot.jpg"), 40, 140, 140);
+  // ...and a tank (spec 2026-11-01 §4): the grids' far end, so a cool morning's
+  // Tops grid has a sleeveless top to put LAST and a hot one has it near the top.
+  makeJpg(path.join(TMP, "clothing", "tank.jpg"), 250, 120, 30);
+  makeJpg(path.join(TMP, "wardrobe-items", "item_tank.jpg"), 250, 120, 30);
+  // ...and two jackets (spec 2026-11-02 §3: "a jacket is for leaving the
+  // house"): a cold-tagged coat and a warm-tagged shell, so the Jackets grid
+  // has an order the MORNING's band and the planning °F's band disagree on.
+  makeJpg(path.join(TMP, "clothing", "coat.jpg"), 30, 30, 120);
+  makeJpg(path.join(TMP, "clothing", "shell.jpg"), 200, 230, 240);
+  makeJpg(path.join(TMP, "wardrobe-items", "item_coat.jpg"), 30, 30, 120);
+  makeJpg(path.join(TMP, "wardrobe-items", "item_shell.jpg"), 200, 230, 240);
   // attrsAt on every entry: a garment that has already been described is one
   // the needs-attributes pass (T3.2) walks past, so this suite's "the AI is
   // never called" pins hold on the full-build doors too. A fixed day, never
@@ -143,6 +165,10 @@ before(async () => {
     "hotbot.jpg": { id: "item_hotbot", ok: true, name: "Linen shorts", category: "shorts", warmth: "hot", attrsAt: DESCRIBED },
     "coldbot.jpg": { id: "item_coldbot", ok: true, name: "Fleece pants", category: "pants", warmth: "cold",
                      weight: "heavy", attrsAt: DESCRIBED },
+    "tank.jpg": { id: "item_tank", ok: true, name: "Striped tank", category: "top", warmth: "hot",
+                  coverage: "sleeveless", attrsAt: DESCRIBED },
+    "coat.jpg": { id: "item_coat", ok: true, name: "Puffy coat", category: "jacket", warmth: "cold", attrsAt: DESCRIBED },
+    "shell.jpg": { id: "item_shell", ok: true, name: "Rain shell", category: "jacket", warmth: "warm", attrsAt: DESCRIBED },
   } }, null, 1));
   // a key IS configured — the point is that the rebuild door still never calls it
   fs.writeFileSync(path.join(TMP, "ai-config.json"),
@@ -166,7 +192,8 @@ before(async () => {
     fs.mkdirSync(path.join(TMP, "wardrobe"), { recursive: true });
     fs.writeFileSync(path.join(TMP, "wardrobe", "history.json"), JSON.stringify({ days: {
       [back(20)]: { band: "warm", page1: [["item_warmtop"]] },
-      [back(10)]: { band: "warm", page1: [["item_top", "item_bot"], ["item_coldtop", "item_coldbot"], ["item_hotbot"]] },
+      [back(10)]: { band: "warm", page1: [["item_top", "item_bot"], ["item_coldtop", "item_coldbot"], ["item_hotbot"],
+                                          ["item_tank", "item_hotbot"]] },
     }, events: {} }, null, 1));
   }
   clothing = require("./clothing.js");
@@ -191,8 +218,11 @@ async function rebuild() {
 test("a window reads the hours she is out, not the day's high", async () => {
   setWindow({ from: 9, to: 12 });
   const t = await rebuild();
-  assert.match(t.label, /^67°/, "67°F is the peak of 9-12, not the 80° at 4 PM");
-  assert.match(t.label, /warm/);
+  // RE-PINNED 11/2 (spec 2026-11-02 §3): the label now says the morning (55
+  // at the default 8 AM) and the window's warmest hour; the band is the
+  // planning °F's, round(55/3 + 2·67/3) = 63, cool.
+  assert.match(t.label, /→ 67°/, "67°F is the peak of 9-12, not the 80° at 4 PM");
+  assert.equal(t.label, "55° → 67°  cool");
   // UPDATED 9/23 (weather unit A, spec §3.6): code 61 IS rain, and the symbol
   // map used to call everything from drizzle to a thunderstorm cloud or cold.
   // Which hour wins is unchanged — that is still max(weather_code).
@@ -204,9 +234,11 @@ test("a window reads the hours she is out, not the day's high", async () => {
 // the tile says. Without this the suite would pass with an exclusive end.
 test("both ends of the window are inclusive", async () => {
   const t = tile();
-  assert.match(t.label, /^67°/, "hour 12 is INSIDE 9-12: its 67° is the peak read");
+  // RE-PINNED 11/2: the high is read as before and now shown after the arrow;
+  // an exclusive end would read 66 there and plan 62, not 63.
+  assert.match(t.label, /→ 67°  cool$/, "hour 12 is INSIDE 9-12: its 67° is the peak read");
   assert.equal(t.symbol, "rain", "hour 9 is INSIDE 9-12: its rain code picks the symbol");
-  assert.match(t.say, /about 67 degrees/);
+  assert.match(t.say, /warming to 67\./);
 });
 
 test("the query is the hourly forecast at the family's coordinates", async () => {
@@ -223,7 +255,9 @@ test("the query is the hourly forecast at the family's coordinates", async () =>
 
 test("the tile says the hours out loud, and the footnote names them", async () => {
   const t = tile();
-  assert.match(t.say, /Between 9 AM and 12 PM it is warm, about 67 degrees\./);
+  // RE-PINNED 11/2 (spec 2026-11-02 §3): with a morning read the tile speaks
+  // both numbers; the hours stay in the footnote.
+  assert.equal(t.say, "This morning it is about 55 degrees, warming to 67. Dress for cool.");
   // UPDATED 9/23 (weather unit A, spec §3.6): the footnote leads with the
   // PLACE. Nothing typed here, so it says the point is the network's guess —
   // which is the state that made every reading cold for eleven days running.
@@ -241,20 +275,24 @@ test("the tile says the hours out loud, and the footnote names them", async () =
 test("no window = 10 AM-2 PM, the middle of her day", async () => {
   setWindow(null);
   const t = await rebuild();
-  assert.match(t.label, /^70°/, "10-14 peaks at 70°F, not the 80° at 4 PM");
-  assert.match(t.label, /warm/);
+  // RE-PINNED 11/2: 10-14 still peaks at 70 °F; with the 55 °F morning the
+  // day plans at round(55/3 + 2·70/3) = 65, cool.
+  assert.match(t.label, /→ 70°/, "10-14 peaks at 70°F, not the 80° at 4 PM");
+  assert.equal(t.label, "55° → 70°  cool");
   assert.equal(t.symbol, "sun", "the 61 at hour 9 is outside the default window");
-  assert.equal(t.say, "Between 10 AM and 2 PM it is warm, about 70 degrees.");
+  assert.equal(t.say, "This morning it is about 55 degrees, warming to 70. Dress for cool.");
   assert.match(t.footnote, /^approximate location · for 10 AM-2 PM · updated /, t.footnote);
 });
 
 test("an afternoon window gets the afternoon's sun", async () => {
   setWindow({ from: 14, to: 17 });
   const t = await rebuild();
-  assert.match(t.label, /^80°/);
-  assert.match(t.label, /hot/);
+  // RE-PINNED 11/2: the 80 °F afternoon is still the high read; with the
+  // 55 °F morning the day plans at round(55/3 + 2·80/3) = 72, warm. The hours
+  // are named by the footnote below, no longer by the spoken line.
+  assert.equal(t.label, "55° → 80°  warm");
   assert.equal(t.symbol, "sun");
-  assert.match(t.say, /Between 2 PM and 5 PM/);
+  assert.equal(t.say, "This morning it is about 55 degrees, warming to 80. Dress for warm.");
   assert.match(t.footnote, /^approximate location · for 2 PM-5 PM · /, t.footnote);
 });
 
@@ -265,8 +303,12 @@ test("an afternoon window gets the afternoon's sun", async () => {
 test("the whole day is called the whole day, not 12 AM-11 PM", async () => {
   setWindow({ from: 0, to: 23 });
   const t = await rebuild();
-  assert.match(t.label, /^80°/, "every hour is read, so the 4 PM peak wins again");
-  assert.equal(t.say, "All day it is hot, about 80 degrees.");
+  // RE-PINNED 11/2: every hour is read, so the 4 PM peak (80) is the high
+  // again; the 8 AM leave hour is clamped to the window's start (hour 0,
+  // 55 °F), which is no SEPARATE morning, so the tile reads as before 11/2 —
+  // with the planning °F, round(55/3 + 2·80/3) = 72.
+  assert.equal(t.label, "72°  warm");
+  assert.equal(t.say, "All day it is warm, about 72 degrees.");
   assert.match(t.footnote, /^approximate location · for all day · updated /, t.footnote);
 });
 
@@ -280,7 +322,7 @@ test("a cache stamped for another window is stale — the forecast is re-read", 
   const r = await clothing.rebuildToday();
   assert.equal(r.mode, "cataloged");
   assert.equal(asks.length, before + 1, "the stale record was thrown away and Open-Meteo asked again");
-  assert.match(tile().label, /^67°/);
+  assert.match(tile().label, /→ 67°/);   // RE-PINNED 11/2: the high sits after the arrow
   // ...and what replaces it is the series, not an answer for one window
   // (UPDATED 10/10, spec §7.1: the window is applied when the store is READ,
   // which is why the 67 above is still the 9-12 peak)
@@ -307,7 +349,8 @@ test("a re-sort queued behind a running re-sort is still only a re-sort", async 
   assert.equal(aiCalls, 0, "the queued run did not turn into a full ingest");
   const cat = JSON.parse(fs.readFileSync(path.join(TMP, "wardrobe.json"), "utf8"));
   assert.ok(!cat.items["waiting.jpg"], "the uncatalogued photo was left alone by both runs");
-  assert.match(tile().label, /^80°/, "and the board really was re-sorted for 2-5 PM");
+  // RE-PINNED 11/2: the high sits after the arrow
+  assert.match(tile().label, /→ 80°/, "and the board really was re-sorted for 2-5 PM");
 });
 
 test("the rebuild door never wakes the AI (photos wait for a real run)", async () => {
@@ -341,9 +384,13 @@ function dealtLooks() {
 }
 const firstLook = (looks, id) => looks.findIndex(c => c.includes(id));
 test("a hot window: the curve reaches tops too (the sweater is under the 5 % floor at 80 °F), the hot bottom is dealt, light pants lead fleece", async () => {
-  setWindow({ from: 14, to: 17 });
+  // RE-PINNED 11/2: 2-5 PM now plans at 72 (the 55 °F morning counts), where a
+  // long sleeve is 12 % of the day and the sweater IS dealt. This case is about
+  // 80 °F, so it reads a window that plans there: 4-5 PM with the leave hour
+  // at 4 PM — the window's start, no separate morning — 80 at both ends.
+  setWindow({ from: 16, to: 17 }, { weatherLeaveAt: 16 });
   const t = await rebuild();
-  assert.ok(t.label.includes("hot"), "the 2-5 PM window really is hot: " + t.label);
+  assert.equal(t.label, "80°  hot", "the 4-5 PM window really is hot: " + t.label);
   const ids = dealtIds();
   assert.ok(!ids.includes("item_coldtop"), "a wool sweater at 80 °F is on no look of any page");
   assert.ok(ids.includes("item_hotbot"), "the hot bottom is dealt");
@@ -353,17 +400,129 @@ test("a hot window: the curve reaches tops too (the sweater is under the 5 % flo
   assert.equal(aiCalls, 0);
 });
 
-test("a warm window: every kind at its share — the long sleeve (29 % at 67 °F) and the shorts (34 %) are both dealt; light pants still lead fleece", async () => {
+// RE-PINNED 11/2: the 9-12 window peaks at 67 as before, but with the 55 °F
+// morning it plans at 63 (cool): long sleeves 50 %, shorts 18 % — still every
+// kind at its share, which is what this case pins.
+test("a mild window: every kind at its share — the long sleeve (50 % at 63 °F) and the shorts (18 %) are both dealt; light pants still lead fleece", async () => {
   setWindow({ from: 9, to: 12 });
   const t = await rebuild();
-  assert.match(t.label, /^67°/, "the 9-12 window is warm, not hot");
+  assert.equal(t.label, "55° → 67°  cool", "the 9-12 window peaks at 67 and plans at 63");
   const ids = dealtIds();
   assert.ok(ids.includes("item_warmtop"), "the two everyday tops are dealt");
   assert.ok(ids.includes("item_top"));
-  assert.ok(ids.includes("item_coldtop"), "at 67 °F long sleeves are 29 % of the day: the only one here is dealt");
-  assert.ok(ids.includes("item_hotbot"), "…and so are the shorts, at 34 %");
+  assert.ok(ids.includes("item_coldtop"), "at 63 °F long sleeves are 50 % of the day: the only one here is dealt");
+  assert.ok(ids.includes("item_hotbot"), "…and so are the shorts, at 18 %");
   const looks = dealtLooks();
-  assert.ok(firstLook(looks, "item_bot") < firstLook(looks, "item_coldbot"), "light pants lead fleece at 67 °F");
+  assert.ok(firstLook(looks, "item_bot") < firstLook(looks, "item_coldbot"), "light pants lead fleece at 63 °F");
+  assert.equal(aiCalls, 0);
+});
+
+// ADDED 11/1 (clothing weather sorter, spec 2026-11-01 §2; dad: "today was
+// cool, her first options when she went to top was all t-shirts"). The browse
+// grids behind Full wardrobe used to be in id order whatever the day; they now
+// follow the same planning °F the deal does, nearest FIT centre first. The
+// fixture's tops: the wool sweater (long heavy, 48), two tees (76) and the tank
+// (90); its pants: the leggings (light, 67.5) and the fleece (heavy, 50).
+function gridIds(id) {
+  const r = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
+  const b = r.boards.find(x => x.id === id);
+  assert.ok(b, "the " + id + " grid is on the board");
+  return b.buttons.filter(x => x.type === "clothing").map(x => x.items[0].id);
+}
+test("a cool window: the Tops grid leads with the long sleeve and puts the tank last; fleece leads the pants", async () => {
+  setWindow({ from: 0, to: 8 });
+  const t = await rebuild();
+  assert.match(t.label, /^55°/, "the 0-8 window is the cool 55 °F of the night and morning");
+  const tops = gridIds("cat_top");
+  assert.equal(tops.length, 4, "every top is on the grid — the weather orders, never hides");
+  assert.equal(tops[0], "item_coldtop", "the wool sweater is her first top on a cool morning: " + tops);
+  assert.equal(tops[tops.length - 1], "item_tank", "the tank is last: " + tops);
+  assert.deepEqual(gridIds("cat_pants"), ["item_coldbot", "item_bot"], "fleece before leggings at 55 °F");
+  assert.equal(aiCalls, 0);
+});
+test("a hot window: the Tops grid flips — the long sleeve is last, the tank ahead of it; light pants lead fleece", async () => {
+  setWindow({ from: 14, to: 17 });
+  const t = await rebuild();
+  // RE-PINNED 11/2 (plan T3 d): 2-5 PM still peaks at 80, but with the 55 °F
+  // morning it plans at 72 (warm). Every order below holds at 72 unchanged:
+  // tees 4 away, tank 18, sweater 24; leggings 4.5, fleece 22.
+  assert.equal(t.label, "55° → 80°  warm");
+  const tops = gridIds("cat_top");
+  assert.equal(tops.length, 4);
+  assert.equal(tops[tops.length - 1], "item_coldtop", "the wool sweater is last at 72 °F: " + tops);
+  assert.ok(tops.indexOf("item_tank") < tops.indexOf("item_coldtop"), "the tank comes before it: " + tops);
+  assert.deepEqual(tops.slice(0, 2).sort(), ["item_top", "item_warmtop"], "the tees (76) are nearest 72 °F: " + tops);
+  assert.deepEqual(gridIds("cat_pants"), ["item_bot", "item_coldbot"], "light pants before fleece at 72 °F");
+  assert.equal(aiCalls, 0);
+});
+
+// ADDED 11/2 — the morning counts (spec 2026-11-02 §3-§5). Dad, 11/2: "low
+// 50s but will get to 67 as a max during 10-2p, would you send your 7 y old to
+// school in shorts? A tank top? No. You'd do pants and maybe a t-shirt / long
+// sleeve" — and on the midpoint: "Try maybe 2/3 to max."
+test("dad's 11/2 day: 52 at 8 AM, 67 at noon plans at 62, cool; the tile says both numbers; the sweater leads the tees", async () => {
+  TEMP_AT = h => h < 9 ? 52 : h === 12 ? 67 : h <= 14 ? 65 : 60;
+  try {
+    setWindow({ from: 10, to: 14 });
+    const t = await rebuild();
+    assert.equal(t.label, "52° → 67°  cool", "round(52/3 + 2·67/3) = 62: " + t.label);
+    assert.equal(t.say, "This morning it is about 52 degrees, warming to 67. Dress for cool.");
+    assert.match(t.footnote, /^approximate location · for 10 AM-2 PM · updated /, t.footnote);
+    // at 62 the sweater (48) and the tees (76) are both 14 away and the
+    // sweater's id sorts first; at the old 67 the tees led by ten
+    const tops = gridIds("cat_top");
+    assert.equal(tops[0], "item_coldtop", "the sweater leads the tops grid at 62 °F: " + tops);
+    assert.equal(tops[tops.length - 1], "item_tank", "the tank is last: " + tops);
+  } finally { TEMP_AT = null; }
+});
+test("dad's summer day: 60 at 8 AM, 75 at the high plans at 70, warm", async () => {
+  TEMP_AT = h => h < 9 ? 60 : h === 12 ? 75 : 70;
+  try {
+    setWindow({ from: 10, to: 14 });
+    const t = await rebuild();
+    assert.equal(t.label, "60° → 75°  warm");
+  } finally { TEMP_AT = null; }
+});
+test("no 8 AM hour in the series: the warmest hour alone, and the tile as before 11/2", async () => {
+  SKIP_HOUR = 8;
+  try {
+    setWindow({ from: 9, to: 12 });
+    const t = await rebuild();
+    assert.equal(t.label, "67°  warm");
+    assert.equal(t.say, "Between 9 AM and 12 PM it is warm, about 67 degrees.");
+  } finally { SKIP_HOUR = null; }
+});
+test("weatherLeaveAt 10 with a window from 10: the morning is hour 10 (66), the plan round(66/3 + 2·70/3) = 69, and the tile reads as before (no separate morning)", async () => {
+  setWindow({ from: 10, to: 14 }, { weatherLeaveAt: 10 });
+  const t = await rebuild();
+  assert.equal(t.label, "69°  warm");
+  assert.equal(t.say, "Between 10 AM and 2 PM it is warm, about 69 degrees.");
+});
+test("a leave hour after the window's start is clamped to it: leave 11, window 9-12 reads hour 9 (64) → round(64/3 + 2·67/3) = 66", async () => {
+  setWindow({ from: 9, to: 12 }, { weatherLeaveAt: 11 });
+  const t = await rebuild();
+  assert.equal(t.label, "66°  warm");
+});
+test("a leave hour stored earlier than the default is read: leave 6 on the fixture day is still the 55 °F morning", async () => {
+  setWindow({ from: 9, to: 12 }, { weatherLeaveAt: 6 });
+  const t = await rebuild();
+  assert.equal(t.label, "55° → 67°  cool");
+});
+test("a flat day (morning = high) is no warming: the tile reads as before 11/2, never \"60° → 60°\"", async () => {
+  TEMP_AT = () => 60;
+  try {
+    setWindow({ from: 10, to: 14 });
+    const t = await rebuild();
+    assert.equal(t.label, "60°  cool");
+    assert.equal(t.say, "Between 10 AM and 2 PM it is cool, about 60 degrees.");
+  } finally { TEMP_AT = null; }
+});
+test("jackets follow the MORNING: a 55 °F morning (cool) under a 72 °F plan (warm) leads with the coat", async () => {
+  setWindow({ from: 14, to: 17 });
+  const t = await rebuild();
+  assert.equal(t.label, "55° → 80°  warm", "the day's band is warm; the morning's is cool");
+  assert.deepEqual(gridIds("acc_jacket"), ["item_coat", "item_shell"],
+    "a jacket is for leaving the house: the cold-tagged coat leads on a cool morning");
   assert.equal(aiCalls, 0);
 });
 
@@ -378,7 +537,8 @@ test("a profile time zone this computer does not know still builds today's board
   clothing.start(TMP, { noTimers: true, tz: () => "Pacific Time" });
   setWindow({ from: 14, to: 17 });
   const t = await rebuild();
-  assert.match(t.label, /^80°/, "the board was rebuilt for the 2-5 PM window");
+  // RE-PINNED 11/2: the high sits after the arrow
+  assert.match(t.label, /→ 80°/, "the board was rebuilt for the 2-5 PM window");
   assert.ok(dealtIds().includes("item_hotbot"), "and it really has outfits on it");
   assert.equal(aiCalls, 0);
   clothing.start(TMP, { noTimers: true });   // really back to the module's own default (below)
