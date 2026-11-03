@@ -1579,7 +1579,11 @@ const SLOTS = [[1,2],[1,3],[1,4],[2,1],[2,4],[3,2],[3,3]];
 // and nowhere near the edges — every cat_* and every acc_* page, inverted.
 // Eight tiles + Back + More = ten targets, the same as a today page and under
 // the contract's comfortable 12.
-function gridPages(id, name, items, backLoad, extra) {
+// `tile` (optional) is the weather tile, pushed on EVERY page at the centre
+// pair when there is a forecast (dad 11/3: "nice to always see the weather in
+// the middle"): eleven targets, still under the comfortable 12. Null leaves
+// the centre black, as it always was.
+function gridPages(id, name, items, backLoad, extra, tile) {
   const pages = [];
   const CELLS = extra ? SLOTS : [...SLOTS, [3,4]];
   const per = CELLS.length;
@@ -1595,10 +1599,65 @@ function gridPages(id, name, items, backLoad, extra) {
     if ((p + 1) * per < items.length)
       buttons.push({ label: "More", type: "control", symbol: "more", load: id + "_" + (p + 2), row: 3, col: 1 });
     if (extra) buttons.push({ ...extra, row: 3, col: 4 });
+    if (tile) buttons.push(tile);
     pages.push({ id: pid, name, rows: 3, columns: 4, buttons });
     if ((p + 1) * per >= items.length) break;
   }
   return pages;
+}
+
+// The weather tile: the forecast across the two centre cells [2,2][2,3],
+// speaking on dwell and staying on the page (no `load`, no `combo`). Built
+// ONCE per build from `w` and pushed by every 3x4 page of the picker, so the
+// words cannot differ page to page. Null when there is no forecast: no tile
+// anywhere, the pair black, the offline board byte for byte as before.
+// Dad, 11/3: "can you also put the weather in the middle box when she is
+// picking out a t-shirt or any other item? nice to always see the weather in
+// the middle." The today pages have carried it since the 9/1 port; since 11/3
+// Full wardrobe, the Accessories menu, every browse page and every accessory
+// page (Dress up included) carry it too (spec 2026-11-03). This amends the 9/3
+// centre-black rule for the Clothing Picker's pages only: every other app's
+// board keeps its black centre.
+function weatherTile(w) {
+  if (!w) return null;
+  // With a window the tile has to say WHICH hours it is talking about,
+  // or a parent reads "72\u00b0" as the whole day again (dad 9/5).
+  // A family that really does want the whole day stores 0-23 (Settings
+  // no longer deletes the key for "All day"), and the whole day is
+  // called the whole day: "for 12 AM-11 PM" is accurate and nobody says
+  // it. `w.window` absent is DEFENCE with no live caller \u2014 weatherWindow()
+  // has answered with a window, default or stored, since 9/23.
+  const span = !w.window ? null
+    : w.window.from === 0 && w.window.to === 23 ? "all day"
+    : hourLabel(w.window.from) + "-" + hourLabel(w.window.to);
+  const lead = span === "all day" ? "All day"
+    : span ? "Between " + hourLabel(w.window.from) + " and " + hourLabel(w.window.to)
+    : "Today";                      // ...and so is this one
+  // 11/2 (spec 2026-11-02 §3): the tile says BOTH numbers the plan is
+  // made of — the morning she leaves the house in and the high she is out
+  // for — and the band of the plan between them: "52° → 67°  cool". A
+  // morning read at the window's own start (the leave hour clamped to it)
+  // is no separate morning, and a morning no cooler than the high is no
+  // "warming to": in both the tile reads as it did before.
+  const twoNumbers = Number.isFinite(w.morning) && Number.isFinite(w.high) && w.morning < w.high &&
+    (!w.window || !Number.isInteger(w.leaveAt) || w.leaveAt < w.window.from);
+  return { label: twoNumbers ? w.morning + "\u00b0 \u2192 " + w.high + "\u00b0  " + w.band
+                            : w.t + "\u00b0  " + w.band, type: "control", symbol: w.symbol,
+    say: twoNumbers
+      ? "This morning it is about " + w.morning + " degrees, warming to " + w.high + ". Dress for " + w.band + "."
+      : lead + " it is " + w.band + ", about " + w.t + " degrees.",
+    // The PLACE leads the footnote: a forecast for the wrong town is
+    // what read cold every day for eleven days, invisibly, and the only
+    // way that is ever caught is if the board says where it is reading.
+    // No town stored means the ISP's guess, and the tile says so.
+    // "updated" is when the forecast was FETCHED, not when the board
+    // was built (spec §7.3): a day served from the stored week reads
+    // "updated Thu, Oct 8 …", so a parent can see the number is old.
+    footnote: (w.place || "approximate location") + " \u00b7 " +
+      (span ? "for " + span + " \u00b7 " : "") + "updated " +
+      new Date(Number.isFinite(w.fetchedAt) ? w.fetchedAt : Date.now()).toLocaleString("en-US",
+        { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
+    row: 2, col: 2, col_span: 2 };
 }
 
 // Page 1 reclaims the old weather corner. Later pages keep Back there.
@@ -1710,7 +1769,11 @@ async function buildCataloged(cat, known) {
   const composites = openCompositeCache(OUTFITS(), { layout: COMPOSITE_LAYOUT });
   // Approved clothing layout: eight looks on page 1, seven thereafter with
   // Back top-left. Weather spans the centre pair and speaks without navigating.
-  // More and Full wardrobe keep their bottom corners. Browse centres stay black.
+  // More and Full wardrobe keep their bottom corners. Since 11/3 every other
+  // 3x4 page of the picker carries the same tile (weatherTile, dad: "nice to
+  // always see the weather in the middle"); with no forecast every centre is
+  // black.
+  const tile = weatherTile(w);
   const boards = [];
   const pages = 1 + Math.max(0, Math.ceil((today.length - per) / laterPer));
   for (let pg = 0; pg < pages; pg++) {
@@ -1718,46 +1781,7 @@ async function buildCataloged(cat, known) {
     const buttons = [];
     const slots = pg === 0 ? FIRST_SLOTS : SLOTS;
     const offset = pg === 0 ? 0 : per + (pg - 1) * laterPer;
-    if (w) {
-      // With a window the tile has to say WHICH hours it is talking about,
-      // or a parent reads "72\u00b0" as the whole day again (dad 9/5).
-      // A family that really does want the whole day stores 0-23 (Settings
-      // no longer deletes the key for "All day"), and the whole day is
-      // called the whole day: "for 12 AM-11 PM" is accurate and nobody says
-      // it. `w.window` absent is DEFENCE with no live caller \u2014 weatherWindow()
-      // has answered with a window, default or stored, since 9/23.
-      const span = !w.window ? null
-        : w.window.from === 0 && w.window.to === 23 ? "all day"
-        : hourLabel(w.window.from) + "-" + hourLabel(w.window.to);
-      const lead = span === "all day" ? "All day"
-        : span ? "Between " + hourLabel(w.window.from) + " and " + hourLabel(w.window.to)
-        : "Today";                      // ...and so is this one
-      // 11/2 (spec 2026-11-02 §3): the tile says BOTH numbers the plan is
-      // made of — the morning she leaves the house in and the high she is out
-      // for — and the band of the plan between them: "52° → 67°  cool". A
-      // morning read at the window's own start (the leave hour clamped to it)
-      // is no separate morning, and a morning no cooler than the high is no
-      // "warming to": in both the tile reads as it did before.
-      const twoNumbers = Number.isFinite(w.morning) && Number.isFinite(w.high) && w.morning < w.high &&
-        (!w.window || !Number.isInteger(w.leaveAt) || w.leaveAt < w.window.from);
-      buttons.push({ label: twoNumbers ? w.morning + "\u00b0 \u2192 " + w.high + "\u00b0  " + w.band
-                                       : w.t + "\u00b0  " + w.band, type: "control", symbol: w.symbol,
-        say: twoNumbers
-          ? "This morning it is about " + w.morning + " degrees, warming to " + w.high + ". Dress for " + w.band + "."
-          : lead + " it is " + w.band + ", about " + w.t + " degrees.",
-        // The PLACE leads the footnote: a forecast for the wrong town is
-        // what read cold every day for eleven days, invisibly, and the only
-        // way that is ever caught is if the board says where it is reading.
-        // No town stored means the ISP's guess, and the tile says so.
-        // "updated" is when the forecast was FETCHED, not when the board
-        // was built (spec §7.3): a day served from the stored week reads
-        // "updated Thu, Oct 8 …", so a parent can see the number is old.
-        footnote: (w.place || "approximate location") + " \u00b7 " +
-          (span ? "for " + span + " \u00b7 " : "") + "updated " +
-          new Date(Number.isFinite(w.fetchedAt) ? w.fetchedAt : Date.now()).toLocaleString("en-US",
-            { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
-        row: 2, col: 2, col_span: 2 });
-    }
+    if (tile) buttons.push(tile);
     if (pg > 0) {
       buttons.push({ label: "Back", type: "back", glyph: "\u2190",
         load: pg === 1 ? "today" : "today_" + pg, row: 1, col: 1 });
@@ -1798,8 +1822,10 @@ async function buildCataloged(cat, known) {
   }
   // hoist today pages to the front so `today` is the root board in order
   boards.sort((a, b) => (a.id.startsWith("today") ? 0 : 1) - (b.id.startsWith("today") ? 0 : 1));
-  // Full wardrobe retains the standard centre-black grid. Its Accessories
-  // entry opens the full menu without taking a slot from suggested outfits.
+  // Full wardrobe keeps the standard grid, its centre pair holding the weather
+  // when there is a forecast (11/3) and black when there is none. Its
+  // Accessories entry opens the full menu without taking a slot from
+  // suggested outfits.
   const kinds = [...ACCESSORY_KINDS, DRESS_UP].filter(k => present.includes(k.id));
   const kindTile = (k, row, col) =>
     ({ label: k.label, type: "category", symbol: k.symbol, load: "acc_" + k.id, row, col });
@@ -1811,15 +1837,18 @@ async function buildCataloged(cat, known) {
     { label: "Outfits", type: "category", symbol: "clothes", load: "cat_outfit", row: 2, col: 1 },
   ];
   if (kinds.length) buildButtons.push(accDoor(2, 4));
+  if (tile) buildButtons.push(tile);
   boards.push({ id: "build", name: "Full wardrobe", rows: 3, columns: 4, buttons: buildButtons });
   // The menu behind the door: the same shape, Back top-left, one tile per
   // present kind over the nine remaining edge cells. Seven kinds is the most
-  // there can ever be (ACCESSORY_KINDS + Dress up), so it always fits on one page.
+  // there can ever be (ACCESSORY_KINDS + Dress up), so it always fits on one
+  // page. The weather stands in its centre like Full wardrobe's (11/3).
   if (kinds.length) {
     const MENU_CELLS = [[1,2],[1,3],[1,4],[2,1],[2,4],[3,1],[3,2],[3,3],[3,4]];
     boards.push({ id: "acc", name: "Accessories", rows: 3, columns: 4, buttons: [
       { label: "Back", type: "back", glyph: "←", load: "build", row: 1, col: 1 },
       ...kinds.map((k, i) => kindTile(k, MENU_CELLS[i][0], MENU_CELLS[i][1])),
+      ...(tile ? [tile] : []),
     ]});
   }
   boards.push({ id: "choose_bottom", name: "Pants or shorts?", rows: 2, columns: 2, buttons: [
@@ -1850,11 +1879,11 @@ async function buildCataloged(cat, known) {
     const list = items.filter(i => i.category === cat && !isFancy(i));
     return typeof temp === "number" && Number.isFinite(temp) ? weatherOrder(list, temp) : list;
   };
-  boards.push(...gridPages("cat_top", "Tops", browse("top"), "today", door));
-  boards.push(...gridPages("cat_pants", "Pants", browse("pants"), "choose_bottom", door));
-  boards.push(...gridPages("cat_shorts", "Shorts", browse("shorts"), "choose_bottom", door));
-  boards.push(...gridPages("cat_dress", "Dresses", browse("dress"), "build", door));
-  boards.push(...gridPages("cat_outfit", "Outfits", browse("set"), "build", door));
+  boards.push(...gridPages("cat_top", "Tops", browse("top"), "today", door, tile));
+  boards.push(...gridPages("cat_pants", "Pants", browse("pants"), "choose_bottom", door, tile));
+  boards.push(...gridPages("cat_shorts", "Shorts", browse("shorts"), "choose_bottom", door, tile));
+  boards.push(...gridPages("cat_dress", "Dresses", browse("dress"), "build", door, tile));
+  boards.push(...gridPages("cat_outfit", "Outfits", browse("set"), "build", door, tile));
   // Every browse grid above asks for a GARMENT word, so an accessory falls
   // into none of them (preflight 2): each present kind gets its own pages.
   // Back goes to Full wardrobe. The morning's band (11/2) only RE-ORDERS
@@ -1869,7 +1898,7 @@ async function buildCataloged(cat, known) {
   for (const k of kinds)
     boards.push(...gridPages("acc_" + k.id, k.label, k === DRESS_UP
       ? weatherOrder(items.filter(isFancy), temp)
-      : accessoryOrder(items.filter(i => i.category === k.id), accBand), "build", door));
+      : accessoryOrder(items.filter(i => i.category === k.id), accBand), "build", door, tile));
   const drawn = composites.finish();
   console.log("[clothing] composites: " + drawn.drawn + " drawn, " + drawn.reused + " reused");
   return { boards, present, weatherless: !w, weatherStale: !!(w && w.stale), composites: drawn };

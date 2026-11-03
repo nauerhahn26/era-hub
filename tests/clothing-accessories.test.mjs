@@ -1117,6 +1117,97 @@ test("approved layout offers 8 then 7 then 7, with speaking weather and no overl
 });
 
 
+// ---- the weather in the middle (spec 2026-11-03) ---------------------------
+//
+// Dad, 11/3: "nice to always see the weather in the middle." The today pages
+// have carried the speaking weather tile in the centre pair since the 9/1
+// port; every other 3x4 page of the picker now carries the SAME tile in the
+// same two cells whenever there is a forecast — Full wardrobe, the
+// Accessories menu, every browse page and every accessory page, Dress up
+// included. This amends the 9/3 centre-black rule for the Clothing Picker's
+// pages only. No forecast: the pair stays black everywhere, as before.
+const picker3x4 = (recipe) => recipe.boards.filter(b => b.rows === 3 && b.columns === 4);
+function assertNoOverlap(page) {
+  const occupied = new Set();
+  for (const b of page.buttons) for (let r = 0; r < (b.row_span || 1); r++)
+    for (let c = 0; c < (b.col_span || 1); c++) {
+      const cell = `${b.row+r},${b.col+c}`;
+      assert.ok(!occupied.has(cell), `${page.id}: overlapping ${cell}`);
+      occupied.add(cell);
+    }
+}
+// One wardrobe twice — once under a sky, once with none — so a page's layout
+// can be read against the very page the offline board draws.
+async function centrePair() {
+  const sky = dataDir("centre-sky"), off = dataDir("centre-off");
+  for (const d of [sky, off]) {
+    const items = materialize({ dataDir: d, n: 35, accessories: { jacket: 1 } });
+    markFancy(d, [items.find(i => i.category === "dress").id]);
+  }
+  await underSky(allDayAt(72), () => build(sky, "dev-centre-sky"));
+  await build(off, "dev-centre-off");
+  return { sky, off };
+}
+
+test("the weather tile stands in the centre pair of EVERY 3x4 picker page under a sky (dad 11/3)", async () => {
+  const { sky, off } = await centrePair();
+  const recipe = recipeOf(sky);
+  const todayTile = at(boardOf(sky, "today"), 2, 2);
+  assert.ok(todayTile && todayTile.footnote != null, "the today page carries the weather tile");
+  const boards = picker3x4(recipe);
+  const ids = boards.map(b => b.id);
+  for (const want of ["today", "today_2", "build", "acc", "cat_top", "cat_top_2", "cat_pants",
+    "cat_shorts", "cat_dress", "acc_jacket", "acc_fancy"])
+    assert.ok(ids.includes(want), want + " is one of the 3x4 boards walked");
+  for (const page of boards) {
+    const tile = at(page, 2, 2);
+    assert.ok(tile, page.id + ": the weather stands in the middle");
+    assert.equal(tile.type, "control", page.id);
+    assert.equal(tile.col_span, 2, page.id + ": across both centre cells");
+    assert.equal(tile.load, undefined, page.id + ": it speaks and stays on the page");
+    assert.equal(tile.combo, undefined, page.id);
+    assert.equal(tile.say, todayTile.say, page.id + ": the same words as the today page");
+    assert.equal(tile.footnote, todayTile.footnote, page.id + ": the same place and time");
+    assert.deepEqual(tile, todayTile, page.id + ": one tile, not a look-alike");
+    assert.equal(at(page, 2, 3), undefined, page.id + ": [2,3] is the span, not a second button");
+    assertNoOverlap(page);
+  }
+  // Nothing else moves: Tops reads cell for cell like the offline Tops.
+  for (const pid of ["cat_top", "cat_top_2", "build", "acc", "acc_jacket", "acc_fancy"]) {
+    const on = boardOf(sky, pid), was = boardOf(off, pid);
+    assert.deepEqual(cellsOf(on, "clothing"), cellsOf(was, "clothing"), pid + ": garments keep their cells");
+    for (const label of ["Back", "More", "Full wardrobe", "Accessories"])
+      assert.equal(cellOf(on, label), cellOf(was, label), pid + ": " + label + " keeps its cell");
+    assert.equal(on.buttons.length, was.buttons.length + 1, pid + ": the weather is the one tile added");
+  }
+  const tops = boardOf(sky, "cat_top");
+  assert.equal(cellOf(tops, "Back"), "1,1");
+  assert.equal(cellOf(tops, "More"), "3,1");
+  assertWardrobeTile(at(tops, 3, 4), "cat_top [3,4]");
+  // "Pants or shorts?" is 2x2: no centre to put it in.
+  const cb = boardOf(sky, "choose_bottom");
+  assert.equal(cb.rows + "x" + cb.columns, "2x2");
+  assert.equal(cb.buttons.length, 4);
+  assert.ok(!cb.buttons.some(b => b.footnote != null), "no weather on Pants or shorts?");
+  assert.deepEqual(cb, boardOf(off, "choose_bottom"), "Pants or shorts? is untouched");
+});
+
+test("with no forecast the centre pair stays black on every 3x4 picker page", async () => {
+  const off = dataDir("centre-off-only");
+  const items = materialize({ dataDir: off, n: 35, accessories: { jacket: 1 } });
+  markFancy(off, [items.find(i => i.category === "dress").id]);
+  await build(off, "dev-centre-off-only");
+  const boards = picker3x4(recipeOf(off));
+  assert.ok(boards.some(b => b.id === "acc_fancy") && boards.some(b => b.id === "cat_top_2"),
+    "Dress up and a _2 page are walked too");
+  for (const page of boards) {
+    assert.equal(at(page, 2, 2), undefined, page.id + ": the centre stays black offline");
+    assert.equal(at(page, 2, 3), undefined, page.id + ": …both of them");
+    assert.ok(!page.buttons.some(b => b.footnote != null), page.id + ": no weather tile anywhere");
+  }
+});
+
+
 test("an existing same-day layout upgrades with a re-sort and no photo calls", async () => {
   const D = dataDir("upgrade-layout");
   materialize({ dataDir: D, n: 35 });
