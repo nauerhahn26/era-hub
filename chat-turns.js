@@ -195,9 +195,12 @@ function applyListsSetting(stored, incoming, fetchSite) {
 // ---- reading the options aloud (stable frame spec 2026-10-28 §6) ----
 // chatPromptMs: the silence after a reveal before the device reads the
 // options (0 = off, else 5-30 s). chatName: the name it says first; the
-// default is the one first name this software carries.
-const DEFAULT_PROMPT = Object.freeze({ chatPromptMs: 12000, chatName: 'Ellie' });
+// default is the one first name this software carries. chatReadVolume (§18):
+// the reading speaks to her alone, at this percent of her voice's volume;
+// 40 is the floor (she must still hear it), 100 is her voice's own; default 60.
+const DEFAULT_PROMPT = Object.freeze({ chatPromptMs: 12000, chatName: 'Ellie', chatReadVolume: 60 });
 const promptMs = value => Number.isSafeInteger(value) && (value === 0 || (value >= 5000 && value <= 30000)) ? value : null;
+const readVolume = value => Number.isSafeInteger(value) && value >= 40 && value <= 100 ? value : null;
 function promptName(value) {
   if (typeof value !== 'string') return null;
   const text = value.trim();
@@ -206,7 +209,8 @@ function promptName(value) {
 function chatPrompt(dataDir) {
   let stored = {};
   try { stored = JSON.parse(fs.readFileSync(path.join(dataDir, 'app-settings.json'), 'utf8')) || {}; } catch { /* the defaults */ }
-  return { chatPromptMs: promptMs(stored.chatPromptMs) ?? DEFAULT_PROMPT.chatPromptMs, chatName: promptName(stored.chatName) ?? DEFAULT_PROMPT.chatName };
+  return { chatPromptMs: promptMs(stored.chatPromptMs) ?? DEFAULT_PROMPT.chatPromptMs, chatName: promptName(stored.chatName) ?? DEFAULT_PROMPT.chatName,
+    chatReadVolume: readVolume(stored.chatReadVolume) ?? DEFAULT_PROMPT.chatReadVolume };
 }
 // The same door as the lists; each key moves on its own.
 function applyPromptSetting(stored, incoming, fetchSite) {
@@ -216,6 +220,8 @@ function applyPromptSetting(stored, incoming, fetchSite) {
   if (ms !== null) next.chatPromptMs = ms;
   const name = incoming && Object.hasOwn(incoming, 'chatName') ? promptName(incoming.chatName) : null;
   if (name !== null) next.chatName = name;
+  const volume = incoming && Object.hasOwn(incoming, 'chatReadVolume') ? readVolume(incoming.chatReadVolume) : null;
+  if (volume !== null) next.chatReadVolume = volume;
   return next;
 }
 // ---- the wake word (stable frame spec 2026-10-28 §8) ----

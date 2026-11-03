@@ -154,8 +154,11 @@ export function createChatVoice(options = {}) {
     signal.addEventListener('abort', abort, { once: true });
     return work.finally(() => signal.removeEventListener('abort', abort));
   }
-  async function say(text, { role, signal, onStart, onEnd, onClip } = {}) {
+  // volume: 0-1 of the device's own, default 1; only the options reader passes
+  // one (stable frame §18): it speaks to her alone, her words stay at full.
+  async function say(text, { role, signal, onStart, onEnd, onClip, volume } = {}) {
     stop(); const mine = generation, selected = preference, voice = roleOf(role), key = keyOf(voice, text);
+    const level = typeof volume === 'number' && Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 1;
     const fresh = () => mine === generation && !signal?.aborted;
     if (!fresh()) return false;
     if (typeof text !== 'string' || !text.trim() || text.length > 600) throw new Error('No words available');
@@ -179,7 +182,7 @@ export function createChatVoice(options = {}) {
         const url = await Promise.race([preparing, cancelled]);
         if (!fresh() || !url) return false;
         return await new Promise((resolve, reject) => {
-          const audio = makeAudio(url); current = audio;
+          const audio = makeAudio(url); current = audio; audio.volume = level;
           finish = () => resolve(false);
           audio.onplaying = began;
           audio.onended = () => resolve(completed());
@@ -192,7 +195,7 @@ export function createChatVoice(options = {}) {
       return await new Promise((resolve, reject) => {
         const utterance = makeUtterance(text), voices = synth.getVoices();
         utterance.voice = voices.find(v => /^en/i.test(v.lang) && v.localService) || voices.find(v => /^en/i.test(v.lang)) || null;
-        utterance.rate = 0.95; utterance.onstart = began;
+        utterance.rate = 0.95; utterance.volume = level; utterance.onstart = began;
         utterance.onend = () => resolve(completed());
         utterance.onerror = () => { if (fresh()) reject(new Error('Device voice unavailable. The words are still here.')); };
         finish = () => resolve(false); synth.speak(utterance);

@@ -391,9 +391,9 @@ test('after a silence the options are read aloud: the name, then each label with
   const page = await context.newPage(), errors = [], clips = [], saved = [], roles = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(() => {
-    window.__lit = []; window.__plays = 0;
+    window.__lit = []; window.__plays = 0; window.__volumes = []; // each play's volume, in order (spec 2026-10-28 §18)
     const play = HTMLMediaElement.prototype.play;
-    HTMLMediaElement.prototype.play = function (...args) { window.__plays++; return play.apply(this, args); };
+    HTMLMediaElement.prototype.play = function (...args) { window.__plays++; window.__volumes.push(this.volume); return play.apply(this, args); };
     document.addEventListener('DOMContentLoaded', () => new MutationObserver(records => {
       for (const record of records) if (record.target.matches?.('.tile.response.on') && !record.oldValue?.split(' ').includes('on')) window.__lit.push(record.target.textContent.trim());
     }).observe(document.querySelector('#grid'), { subtree: true, attributes: true, attributeFilter: ['class'], attributeOldValue: true }));
@@ -402,7 +402,7 @@ test('after a silence the options are read aloud: the name, then each label with
   await page.route('**/tts', route => { const body = route.request().postDataJSON(); clips.push(body.text); roles.push([body.text, body.voice]); return route.fulfill({ status: 200, contentType: 'audio/wav', body: makeChatToneWav() }); });
   await page.route('**/settings', route => {
     if (route.request().method() === 'POST') { saved.push(route.request().postDataJSON()); return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }); }
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ dwellMs: 1200, chatPromptMs: 1000, chatName: 'Sam' }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ dwellMs: 1200, chatPromptMs: 1000, chatName: 'Sam', chatReadVolume: 60 }) });
   });
   await page.goto(base + '/chat/'); await page.waitForFunction(() => document.body.dataset.storageReady === 'true');
   await page.waitForFunction(() => document.querySelector('#chatName').value === 'Sam');
@@ -422,6 +422,8 @@ test('after a silence the options are read aloud: the name, then each label with
   assert.deepEqual(await page.evaluate(() => window.__lit), ['Music', 'A story'], 'each reply lit in spoken order');
   assert.equal(await page.evaluate(() => window.__plays), 3, 'the name, then each label');
   assert.ok(clips.includes('Sam, your options are') && clips.includes('Music') && clips.includes('A story'));
+  // The reading speaks to her alone (spec 2026-10-28 §18): each of its clips plays at the stored fraction of her voice.
+  assert.deepEqual(await page.evaluate(() => window.__volumes), [0.6, 0.6, 0.6], 'the name and each label at 60 % of her voice');
   // The reading is the helper voice; each label is also her pick's words, so
   // the same text is two clips, one per voice (spec 2026-10-31 §3.3).
   const rolesOf = text => [...new Set(roles.filter(([said]) => said === text).map(([, role]) => role))].sort();
@@ -433,7 +435,7 @@ test('after a silence the options are read aloud: the name, then each label with
   assert.equal(await page.evaluate(() => window.__plays), 6, 'two readings of a batch, then quiet');
   assert.deepEqual(await page.evaluate(() => window.__lit), ['Music', 'A story', 'Music', 'A story']);
   // A new batch: a glance on a tile mid-reading (dwell progress) never stops it; a selection stops it at once.
-  await page.evaluate(() => { window.__lit = []; window.__plays = 0; });
+  await page.evaluate(() => { window.__lit = []; window.__plays = 0; window.__volumes = []; });
   await ask();
   await page.waitForFunction(() => window.__lit.length === 1, null, { timeout: 15000 });
   await page.evaluate(() => { const tile = [...document.querySelectorAll('#grid .tile.response')].find(el => el.textContent.includes('A story'));
@@ -444,12 +446,29 @@ test('after a silence the options are read aloud: the name, then each label with
   await page.waitForTimeout(3000);
   assert.deepEqual(await page.evaluate(() => window.__lit), ['Music', 'A story', 'Music'], 'the reading stopped at the selection, and never came back');
   assert.equal(await page.locator('#grid .response.on').count(), 0, 'no tile is left lit');
-  // The partner dialog: Off / 10 / 12 / 15 / 20 s and her name, saved to the device.
+  // Her pick is her own words: full volume, after a reading that was all at 60 % (§18).
+  const volumes = await page.evaluate(() => window.__volumes);
+  assert.ok(volumes.length >= 4 && volumes.slice(0, -1).every(level => level === 0.6), `the reading's clips at 0.6: ${JSON.stringify(volumes)}`);
+  assert.equal(volumes.at(-1), 1, 'her pick plays at full volume');
+  // The partner dialog: "Her options are read at" saves and takes effect on the next reading (§18).
+  await page.locator('#partnerOpen').click();
+  assert.equal(await page.locator('#chatReadVolume').inputValue(), '60', 'the stored fraction is shown');
+  assert.deepEqual(await page.locator('#chatReadVolume option').evaluateAll(options => options.map(option => [option.value, option.textContent])),
+    [['100', 'Same as her voice'], ['60', 'Softer'], ['40', 'Quiet']], 'nothing below Quiet is offered');
+  await page.locator('#chatReadVolume').selectOption('40');
+  await page.waitForFunction(() => document.querySelector('#chatReadVolumeNote').textContent.startsWith('Saved'));
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('#partnerDialog').open);
+  await page.evaluate(() => { window.__volumes = []; });
+  await ask();
+  await page.waitForFunction(() => window.__volumes.length >= 1, null, { timeout: 15000 });
+  assert.equal((await page.evaluate(() => window.__volumes))[0], 0.4, 'the next reading plays at the new fraction');
+  // Off / 10 / 12 / 15 / 20 s and her name, saved to the device.
   await page.locator('#partnerOpen').click();
   await page.locator('#chatPrompt').selectOption('15000');
   await page.locator('#chatName').fill('Alex'); await page.locator('#chatName').blur();
   await page.waitForFunction(() => document.querySelector('#chatPromptNote').textContent.startsWith('Saved'));
-  assert.deepEqual(saved, [{ chatPromptMs: 15000 }, { chatName: 'Alex' }]);
+  assert.deepEqual(saved, [{ chatReadVolume: 40 }, { chatPromptMs: 15000 }, { chatName: 'Alex' }]);
   assert.deepEqual(await page.locator('#chatPrompt option').evaluateAll(options => options.map(option => option.value)).then(values => values.filter(value => value !== '1000')), ['0', '10000', '12000', '15000', '20000']);
   assert.deepEqual(errors, []);
 });
