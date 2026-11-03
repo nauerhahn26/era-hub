@@ -278,13 +278,44 @@ function loadEnabledApps() {
 // (Ellie's device runs the family build — never fight it).
 // ERA_GAZE_BUS_PORT: the tests' stand-in engine; a device always has 49155.
 const GAZE_PORT = Number(process.env.ERA_GAZE_BUS_PORT) || 49155;
-function gazeBusAlive() {
+// The engine's /status, parsed — null when nothing answers (or the answer is
+// not JSON: a family build is still "alive", see gazeBusAlive).
+function gazeBusProbe() {
   return new Promise((resolve) => {
-    const req2 = http.get({ host: "127.0.0.1", port: GAZE_PORT, path: "/status", timeout: 900 },
-      (r) => { r.resume(); resolve(true); });
-    req2.on("error", () => resolve(false));
-    req2.on("timeout", () => { req2.destroy(); resolve(false); });
+    const req2 = http.get({ host: "127.0.0.1", port: GAZE_PORT, path: "/status", timeout: 900 }, (r) => {
+      let body = "";
+      r.setEncoding("utf8");
+      r.on("data", (c) => { if (body.length < 65536) body += c; });
+      r.on("end", () => { let j = {}; try { j = JSON.parse(body); } catch {} resolve(j && typeof j === "object" ? j : {}); });
+      r.on("error", () => resolve({}));
+    });
+    req2.on("error", () => resolve(null));
+    req2.on("timeout", () => { req2.destroy(); resolve(null); });
   });
+}
+const gazeBusAlive = () => gazeBusProbe().then((j) => j !== null);
+// Tablet 2026-11-01: after Modern Standby re-plugged the tracker, the engine's
+// stream stayed open, error-free and EMPTY for 17 hours while its bus answered
+// and the supervisor called it healthy. The engine (v2.7) now reconnects itself
+// after 15 s of silence; this is the hub's own second look: an engine that says
+// connected and silent for longer than this is counted as gone, and the
+// restart ladder does what a hand launch of a fresh process did for dad.
+// A tracker that is NOT connected is the engine's own retry loop — left alone.
+const GAZE_STREAM_SILENT_MS = Number(process.env.ERA_GAZE_STREAM_SILENT_MS) || 90000;
+let gazeEngine = null;          // the last probe's own report: { connected, silentMs, samples }
+let gazeSilentLogged = false;
+async function gazeEngineAlive() {
+  const j = await gazeBusProbe();
+  if (j === null) return false;
+  if ("connected" in j) gazeEngine = { connected: j.connected === true, silentMs: typeof j.silentMs === "number" ? j.silentMs : null,
+                                       samples: typeof j.samples === "number" ? j.samples : null };
+  if (j.connected === true && typeof j.silentMs === "number" && j.silentMs > GAZE_STREAM_SILENT_MS) {
+    if (!gazeSilentLogged) console.log("[gaze] engine answers but its tracker stream has been silent for " + Math.round(j.silentMs / 1000) + " s — counting it as gone");
+    gazeSilentLogged = true;
+    return false;
+  }
+  gazeSilentLogged = false;
+  return true;
 }
 const GAZE_DIR = path.join(__dirname, "gaze");
 // The engine is compiled ON the device, so a source fix shipped by the updater
@@ -429,7 +460,7 @@ const GAZE_STOP_MARKER = path.join(DATA, "gaze-stopped.json");
 const gazeSupervisor = require("./gaze-supervisor.js").createGazeSupervisor({
   enabled: () => gazeCanCompile() && gazeCompiled() && loadEnabledApps().includes("eragaze"),
   busy: () => !!appInstalling.eragaze,
-  isAlive: gazeBusAlive,
+  isAlive: gazeEngineAlive,
   stopOurs: () => stopGazeProcess(),
   start: () => startGazeProcess(),
   marker: {
@@ -4082,7 +4113,8 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && urlPath === "/status") {
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(JSON.stringify({ build: updater.runningBuild, pid: process.pid, uptimeMs: Math.round(process.uptime() * 1000),
-                             gaze: { ...gazeSupervisor.status(), pollMs: GAZE_POLL_MS, port: GAZE_PORT },
+                             gaze: { ...gazeSupervisor.status(), pollMs: GAZE_POLL_MS, port: GAZE_PORT,
+                                     streamSilentMs: GAZE_STREAM_SILENT_MS, engine: gazeEngine },
                              buttons: buttons.status() }));
     return;
   }
