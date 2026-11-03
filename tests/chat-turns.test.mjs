@@ -447,11 +447,11 @@ test('a turn record keeps the stable frame fields (§4): the mode she swapped to
 
 test('reading the options aloud (stable frame §6): the delay and the name, defaults, cleaned, same door', async t => {
   const dataDir = await directory(t);
-  assert.deepEqual(chatPrompt(dataDir), { chatPromptMs: 12000, chatName: 'Ellie' }, 'no app-settings file means the defaults');
+  assert.deepEqual(chatPrompt(dataDir), { chatPromptMs: 12000, chatName: 'Ellie', chatReadVolume: 60 }, 'no app-settings file means the defaults');
   await fs.writeFile(path.join(dataDir, 'app-settings.json'), JSON.stringify({ chatPromptMs: 0, chatName: 7 }));
-  assert.deepEqual(chatPrompt(dataDir), { chatPromptMs: 0, chatName: 'Ellie' }, 'off is a real choice; a bad name reads as the default');
+  assert.deepEqual(chatPrompt(dataDir), { chatPromptMs: 0, chatName: 'Ellie', chatReadVolume: 60 }, 'off is a real choice; a bad name reads as the default');
   await fs.writeFile(path.join(dataDir, 'app-settings.json'), JSON.stringify({ chatPromptMs: 4000, chatName: "Mary-Jo O'Neil" }));
-  assert.deepEqual(chatPrompt(dataDir), { chatPromptMs: 12000, chatName: "Mary-Jo O'Neil" });
+  assert.deepEqual(chatPrompt(dataDir), { chatPromptMs: 12000, chatName: "Mary-Jo O'Neil", chatReadVolume: 60 });
   for (const ms of [0, 5000, 15000, 30000]) assert.deepEqual(applyPromptSetting({ a: 1 }, { chatPromptMs: ms }), { a: 1, chatPromptMs: ms });
   for (const ms of [1, 4999, 30001, 12000.5, '12000', null, -1, Infinity])
     assert.deepEqual(applyPromptSetting({ chatPromptMs: 15000 }, { chatPromptMs: ms }), { chatPromptMs: 15000 }, JSON.stringify(ms));
@@ -462,6 +462,23 @@ test('reading the options aloud (stable frame §6): the delay and the name, defa
   assert.deepEqual(applyPromptSetting({}, { chatPromptMs: 7, chatName: 'Sam' }), { chatName: 'Sam' }, 'each key on its own');
   for (const site of ['cross-site', 'same-site']) assert.deepEqual(applyPromptSetting({}, { chatPromptMs: 0, chatName: 'Sam' }, site), {});
   for (const site of [undefined, 'same-origin', 'none']) assert.deepEqual(applyPromptSetting({}, { chatPromptMs: 0 }, site), { chatPromptMs: 0 });
+});
+
+test('the reading\'s volume (stable frame §18): chatReadVolume is a percent 40-100, default 60, anything else reads as the default, same door', async t => {
+  const dataDir = await directory(t);
+  await fs.writeFile(path.join(dataDir, 'app-settings.json'), JSON.stringify({ chatReadVolume: 40 }));
+  assert.deepEqual(chatPrompt(dataDir), { chatPromptMs: 12000, chatName: 'Ellie', chatReadVolume: 40 }, 'the floor is a real choice');
+  for (const stored of [39, 101, 60.5, '60', null, true, [60], 0]) {
+    await fs.writeFile(path.join(dataDir, 'app-settings.json'), JSON.stringify({ chatReadVolume: stored }));
+    assert.equal(chatPrompt(dataDir).chatReadVolume, 60, `stored ${JSON.stringify(stored)} reads as the default`);
+  }
+  for (const pct of [40, 60, 75, 100]) assert.deepEqual(applyPromptSetting({ a: 1 }, { chatReadVolume: pct }), { a: 1, chatReadVolume: pct });
+  for (const pct of [0, 39, 101, 60.5, '60', null, -1, Infinity, NaN, undefined])
+    assert.deepEqual(applyPromptSetting({ chatReadVolume: 60 }, { chatReadVolume: pct }), { chatReadVolume: 60 }, String(pct));
+  assert.deepEqual(applyPromptSetting({}, { chatReadVolume: 40, chatPromptMs: 7 }), { chatReadVolume: 40 }, 'each key on its own');
+  assert.deepEqual(applyPromptSetting({ chatPromptMs: 15000 }, { chatPromptMs: 0, chatReadVolume: 100 }), { chatPromptMs: 0, chatReadVolume: 100 }, 'both at once');
+  for (const site of ['cross-site', 'same-site']) assert.deepEqual(applyPromptSetting({}, { chatReadVolume: 40 }, site), {});
+  for (const site of [undefined, 'same-origin', 'none']) assert.deepEqual(applyPromptSetting({}, { chatReadVolume: 40 }, site), { chatReadVolume: 40 });
 });
 
 test('the wake word (stable frame §8): chatWakeMode off by default, only a boolean moves it, same door; a wake turn record', async t => {

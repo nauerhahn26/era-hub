@@ -716,3 +716,20 @@ hidden half hour, 5 "Reload". Only 3 and 5 change code.
       Built 11/1: chat-api `build` option (value or function; unknown =
       omitted), app.js `window.__chatFollow` seam (reload, pollMs, limitMs)
       for the browser case; chat-api 69/69, chat-browser 17/17.
+
+## Yes and No alone + a softer reading (dad, 11/2 night) — spec §17, §18
+- [x] Y4 hub: the yes-or-no local set is Yes and No (spec §17); the tests
+      that pin four items say two (chat-api, chat-ear-hub, chat-pictures,
+      chat-browser, chat-commands-browser). Built 11/2: one line in
+      chat-api.js; the frame already lays two across both rows (chat-frame);
+      the §11 browser case merges the full answers into the two in place.
+- [x] V1 page + hub: the reading plays at `chatReadVolume` % (spec §18):
+      setting 40–100 default 60 in chat-turns beside chatPromptMs, the
+      partner select "Her options are read at", `voice.say({ volume })`
+      applied to the clip and the device voice; only the reader passes it.
+      Tests first. Built 11/2: `readVolume` rides `chatPrompt`/
+      `applyPromptSetting` (no server.js change); `audio.volume` set before
+      play, `utterance.volume` on the device voice; an unlisted stored
+      percent is shown as "<n> %" like an unlisted delay; the §6 browser
+      case records each play's volume (0.6 ×3, her pick at 1, 0.4 after the
+      select saves).

@@ -65,6 +65,23 @@ test('disabled saved setup fails without any clip request or automatic fallback'
   s.voice.dispose();
 });
 
+test('the reading\'s volume (stable frame §18): say applies volume to the clip before it plays and to the device utterance; default 1, clamped, a non-number ignored', async () => {
+  const playedAt = [], utterances = [];
+  const s = setup({ makeAudio: () => ({ pause() {}, play() { playedAt.push(this.volume); queueMicrotask(() => { this.onplaying?.(); this.onended?.(); }); return Promise.resolve(); } }),
+    makeUtterance: text => { const utterance = { text }; utterances.push(utterance); return utterance; } });
+  assert.equal(await s.voice.say('Softer', { role: 'helper', volume: 0.6 }), true);
+  assert.equal(await s.voice.say('Full'), true);
+  assert.equal(await s.voice.say('Loud', { volume: 1.5 }), true);
+  assert.equal(await s.voice.say('Below', { volume: -1 }), true);
+  assert.equal(await s.voice.say('Text', { volume: '0.4' }), true);
+  assert.equal(await s.voice.say('Not a number', { volume: NaN }), true);
+  assert.deepEqual(playedAt, [0.6, 1, 1, 0, 1, 1], 'the volume is on the element when play is called');
+  s.voice.setPreference('local');
+  assert.equal(await s.voice.say('Device softer', { volume: 0.4 }), true); assert.equal(utterances.at(-1).volume, 0.4);
+  assert.equal(await s.voice.say('Device full'), true); assert.equal(utterances.at(-1).volume, 1);
+  s.voice.dispose();
+});
+
 test('the hub voice is read once, not per say; a refresh (Start Chat or the 10-minute timer) invalidates clips of a changed voice', async () => {
   let now = 0;
   const s = setup({ now: () => now });

@@ -404,7 +404,7 @@ test('deterministic alternatives, yes/no and comments never call external genera
   assert.deepEqual(alternatives.choices.map(x => x.say), ['Apples', 'Pears']);
   const yesno = await (await s.request('/choices', { text: 'Did you enjoy that?' })).json();
   assert.equal(yesno.kind, 'yes-no');
-  assert.ok(yesno.choices.some(x => x.say === 'Yes'));
+  assert.deepEqual(yesno.choices.map(x => x.say), ['Yes', 'No'], 'Yes and No alone (stable frame §17)');
   const greeting = await (await s.request('/choices', { text: 'Hello!' })).json();
   assert.equal(greeting.kind, 'comments');
   const open = await (await s.request('/choices', { text: 'What happened today?' })).json();

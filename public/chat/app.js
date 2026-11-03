@@ -197,8 +197,9 @@ function paintDiagnostics() { const box = document.getElementById('diagnostics')
 let reader = null; // the options reader (public/chat/prompt.js), made once the voice exists
 let readingClip = ''; // the reading's whole text while it is read (its clip at the hub)
 // Reading the options aloud (spec 2026-10-28 §6): the device's delay (0 = off)
-// and her name, from /settings (chatPromptMs, chatName).
-let promptMs = 0, herName = '';
+// and her name, from /settings (chatPromptMs, chatName); readVolume (§18): the
+// reading's percent of her voice, 40-100, default 60 (it speaks to her alone).
+let promptMs = 0, herName = '', readVolume = 60;
 const promptPrefix = () => (herName ? `${herName}, your options are` : 'Your options are');
 const lists = { questions: [], comments: [], about: [] }, world = { about: [], week: [] };
 let listsVersion = 0;
@@ -376,7 +377,7 @@ const controller = createChatController({
 });
 
 // ---- reading the options aloud (spec 2026-10-28 §6) ----
-function setPrompt(ms, name) {
+function setPrompt(ms, name, volume) {
   if (ms !== undefined) {
     const value = Number(ms);
     promptMs = Number.isFinite(value) && value >= 0 && value <= 60000 ? Math.round(value) : 0;
@@ -385,11 +386,19 @@ function setPrompt(ms, name) {
     select.value = String(promptMs);
   }
   if (name !== undefined) { herName = typeof name === 'string' ? name.trim().slice(0, 24) : ''; $('chatName').value = herName; paintWake(); }
+  if (volume !== undefined) {
+    const value = Number(volume);
+    readVolume = Number.isInteger(value) && value >= 40 && value <= 100 ? value : 60;
+    const select = $('chatReadVolume');
+    if (![...select.options].some(option => option.value === String(readVolume))) select.append(new Option(`${readVolume} %`, String(readVolume)));
+    select.value = String(readVolume);
+  }
   if (promptMs > 0) voice.prefetch([{ say: promptPrefix() }], { role: 'helper' });
 }
 const tileFor = item => $('grid').querySelector(`.tile.response[data-choice-id="${CSS.escape(item.id)}"]`);
+// Only the reader passes a volume (§18); her words, the strip's repeat and the wake prompts stay at full.
 reader = createOptionsReader({ delayMs: () => promptMs, name: () => herName,
-  speak: (text, signal) => voice.say(text, { role: 'helper', signal }),
+  speak: (text, signal) => voice.say(text, { role: 'helper', signal, volume: readVolume / 100 }),
   light: item => tileFor(item)?.classList.add('on'), unlight: item => tileFor(item)?.classList.remove('on'),
   // The reading's whole text is one clip at the hub (§13): its gaps never end it.
   onStart: (text, readings) => { readingClip = audioStarted(text); turnLog.content(questionMetric, { prompted: true, readings }); },
@@ -411,7 +420,7 @@ fetch('/settings').then(r => r.json()).then(s => {
   testMode = s.chatTestMode === true; paintTestMode();
   if (Array.isArray(s.chatLikes)) $('chatLikes').value = s.chatLikes.filter(item => typeof item === 'string').join('\n');
   for (const [key, field] of LIST_FIELDS) setList(key, s[field]);
-  setPrompt(s.chatPromptMs, s.chatName);
+  setPrompt(s.chatPromptMs, s.chatName, s.chatReadVolume);
   if (typeof s.chatWakeMode === 'boolean') wakeMode = s.chatWakeMode;
   paintWake(); if (wakeMode) void startEar();
   const dwell = Math.max(600, Math.min(3000, Number(s.dwellMs) || 1200));
@@ -1777,6 +1786,15 @@ $('chatPrompt').addEventListener('change', async () => {
     setPrompt(value);
     $('chatPromptNote').textContent = value ? `Saved: her options are read after ${value / 1000} seconds.` : 'Saved: her options are not read aloud.';
   } catch { $('chatPromptNote').textContent = 'Not saved. Try again.'; }
+});
+$('chatReadVolume').addEventListener('change', async () => {
+  const value = Number($('chatReadVolume').value);
+  try {
+    const saved = await fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chatReadVolume: value }) });
+    if (!saved.ok) throw new Error();
+    setPrompt(undefined, undefined, value);
+    $('chatReadVolumeNote').textContent = value === 100 ? 'Saved: her options are read as loud as her voice.' : `Saved: her options are read at ${value} % of her voice.`;
+  } catch { $('chatReadVolumeNote').textContent = 'Not saved. Try again.'; }
 });
 $('chatName').addEventListener('change', async () => {
   const name = $('chatName').value.trim().slice(0, 24);

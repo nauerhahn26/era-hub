@@ -52,6 +52,9 @@
       <label>Read her options aloud after <select id="chatPrompt"><option value="0">Off</option><option value="10000">10 seconds</option><option value="12000">12 seconds</option><option value="15000">15 seconds</option><option value="20000">20 seconds</option></select></label>
       <p>When replies are on screen and she has not answered, Chat says her name and her options, lighting each one, twice. A selection stops it.</p>
       <p id="chatPromptNote" role="status"></p>
+      <label>Her options are read at <select id="chatReadVolume"><option value="100">Same as her voice</option><option value="60">Softer</option><option value="40">Quiet</option></select></label>
+      <p>The reading speaks to her alone, so it can be softer than her own words. Quiet is the floor.</p>
+      <p id="chatReadVolumeNote" role="status"></p>
       <label>Her name, said before her options <input id="chatName" maxlength="24" placeholder="Her first name"></label>
       <p id="chatNameNote" role="status"></p>
     </section>
