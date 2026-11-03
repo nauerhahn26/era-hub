@@ -716,3 +716,13 @@ hidden half hour, 5 "Reload". Only 3 and 5 change code.
       Built 11/1: chat-api `build` option (value or function; unknown =
       omitted), app.js `window.__chatFollow` seam (reload, pollMs, limitMs)
       for the browser case; chat-api 69/69, chat-browser 17/17.
+
+## Yes and No alone + a softer reading (dad, 11/2 night) — spec §17, §18
+- [ ] Y4 hub: the yes-or-no local set is Yes and No (spec §17); the tests
+      that pin four items say two (chat-api, chat-ear-hub, chat-pictures,
+      chat-browser, chat-commands-browser).
+- [ ] V1 page + hub: the reading plays at `chatReadVolume` % (spec §18):
+      setting 40–100 default 60 in chat-turns beside chatPromptMs, the
+      partner select "Her options are read at", `voice.say({ volume })`
+      applied to the clip and the device voice; only the reader passes it.
+      Tests first.

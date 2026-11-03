@@ -399,3 +399,50 @@ update"), and Chat reloads itself to the new build ("Reload").
   (chat-ear-hub or chat-api suite); the page reloads on a changed build and
   not on the same one, waits for an active hold, and stops asking after 3
   min (chat-browser, with `location.reload` stubbed).
+
+## 17. Yes and No alone (dad, 11/2 night)
+
+A yes-or-no question's local set was Yes, No, I'm not sure, Please say that
+again. Dad: "that just reduces the amount of space. There's already a
+Something else on the board that's static, and the question will repeat
+itself naturally … it should just give yes, no if it can." So:
+
+- The local set for a yes-or-no question is Yes and No: two big replies in
+  the middle (the frame already lays out two). Nothing else is offered
+  there; Something else and the question strip (§15) cover the rest, and the
+  reading (§6) repeats the options by itself.
+- §11 is unchanged: the full answers ("Yes, I'm hungry", "No, I'm not
+  hungry") still replace the two in place when the model answers, with the
+  feeling picture and the check or cross badge; the corners keep their look.
+- The fixed fallback set for an open question when no reply service is
+  configured (Tell me more, I'm not sure, …) is not a yes-or-no set and
+  stays.
+- Tests that pin the four-item set say two.
+
+## 18. The reading speaks to her alone: a softer volume (dad, 11/2 night)
+
+When Chat reads her options aloud it is talking to her, not to the room
+(dad: "When it's repeating the options, it's only speaking to her … the
+volume could have a different volume … relative to the other volume. But it
+also needs a minimum … so that she can, of course, hear it … less distracting
+for everybody").
+
+- The reading (the name, "your options are", and each option, helper voice)
+  plays at a fraction of her voice's volume. The fraction is a partner
+  setting, "Her options are read at": Same as her voice (100 %), Softer
+  (60 %, the default) or Quiet (40 %). 40 % is the floor: the setting offers
+  nothing lower, and a stored value outside 40–100 reads as the default.
+  The browser's clip volume is already relative to the device's volume, so
+  the fraction is relative to whatever the room hears her at, which is what
+  dad asked for.
+- Stored with the other reading settings (`chatReadVolume`, a percent, in
+  /settings beside `chatPromptMs` and `chatName`; the same validation path in
+  chat-turns.js) and loaded with them. Saved when the select changes, like
+  the delay.
+- `voice.say` takes `volume` (0–1, default 1) and applies it to the clip
+  (the audio element) and to the device voice (the utterance's volume). Only
+  the reader passes it. Her own words, the question strip's repeat and the
+  wake prompts keep full volume.
+- No new record. Tests first: voice (say applies the volume to the element it
+  makes), chat-turns (the setting's validation and default), chat-browser or
+  chat-ui (the reader speaks at the stored fraction; the select saves).
