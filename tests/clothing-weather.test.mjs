@@ -456,6 +456,26 @@ test("a hot window: the Tops grid flips — the long sleeve is last, the tank ah
   assert.equal(aiCalls, 0);
 });
 
+// ADDED 11/3 (the weather in the middle, spec 2026-11-03; dad: "nice to always
+// see the weather in the middle"): the Tops grid carries the today page's own
+// weather tile across its centre pair, and the tile is no garment — `gridIds`
+// still reads the four tops and nothing else.
+test("the Tops grid carries the today page's weather tile in the middle, and its garments are unchanged", async () => {
+  setWindow({ from: 9, to: 12 });
+  const t = await rebuild();
+  const r = JSON.parse(fs.readFileSync(path.join(TMP, "recipes", "today.json"), "utf8"));
+  const tops = r.boards.find(b => b.id === "cat_top");
+  const mid = tops.buttons.find(b => b.row === 2 && b.col === 2);
+  assert.ok(mid, "the weather stands in the middle of the Tops grid");
+  assert.equal(mid.label, "55° → 67°  cool");
+  assert.deepEqual(mid, t, "the same tile as the today page, word for word");
+  assert.equal(mid.items, undefined, "the tile carries no garment");
+  const ids = gridIds("cat_top");
+  assert.equal(ids.length, 4, "the four tops and nothing else: " + ids);
+  assert.deepEqual([...ids].sort(), ["item_coldtop", "item_tank", "item_top", "item_warmtop"]);
+  assert.equal(aiCalls, 0);
+});
+
 // ADDED 11/2 — the morning counts (spec 2026-11-02 §3-§5). Dad, 11/2: "low
 // 50s but will get to 67 as a max during 10-2p, would you send your 7 y old to
 // school in shorts? A tank top? No. You'd do pants and maybe a t-shirt / long
