@@ -19,6 +19,7 @@ const fsp = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { ownRequest, loadChatEnvironment } = require('./chat-api.js');
+const { pickPicture, tablePicture } = require('./chat-symbols.js');
 
 const PREFIX = '/chat/api';
 const LIMITS = Object.freeze({ bodyBytes: 65536, audioBytes: 480000, audioTurns: 200, dayBytes: 16777216,
@@ -168,26 +169,64 @@ function applyLikesSetting(stored, incoming, fetchSite) {
 }
 // ---- her lists (stable frame spec 2026-10-28 §2): the rail's pages ----
 // My questions, My comments and About me, edited in the partner dialog one
-// item per line: up to twenty items of forty characters. Generic defaults;
-// family facts are entered on the device, never shipped.
+// item per line: up to twenty items of forty characters (About me ten, spec
+// 2026-11-07 §2). Each item is `{ label, symbol, symbolId }`: the picture is
+// chosen when the line is saved (§2/§6), never guessed at the reveal. Generic
+// defaults; family facts are entered on the device, never shipped.
 const DEFAULT_QUESTIONS = Object.freeze(['How are you?', 'What are we doing today?', 'Did you have fun?', 'Can I have a turn?', "What's for dinner?",
   'Where are we going?', 'Who is coming?', 'Can we play?', 'Is it time yet?', "What's that?"]);
 const DEFAULT_COMMENTS = Object.freeze(["That's cool!", 'That sounds fun!', 'I love that!', 'No way!', 'Silly!', "I'm tired", "I'm hungry",
   'Again, please', "I don't like that", 'Wait for me']);
-const DEFAULT_ABOUT = Object.freeze(['I talk with my eyes', 'I love books', 'I like to draw', 'Ask me anything']);
-const LISTS = Object.freeze({ chatQuestions: DEFAULT_QUESTIONS, chatComments: DEFAULT_COMMENTS, chatAbout: DEFAULT_ABOUT });
-const itemList = value => phraseList(value, 20, 40);
+// About me: whole first-person sentences with their pictures; "Ask me anything" has none.
+const DEFAULT_ABOUT = Object.freeze([['I talk with my eyes', 'eyes'], ['I go to school', 'school'], ['I love music', 'music'], ['I love books', 'book'],
+  ['I like to draw', 'draw'], ['I like movies', 'cinema'], ['I like to be silly', 'silly'], ['Ask me anything', null]]
+  .map(([label, symbol]) => Object.freeze({ label, symbol })));
+const LISTS = Object.freeze({ chatQuestions: [DEFAULT_QUESTIONS, 20], chatComments: [DEFAULT_COMMENTS, 20], chatAbout: [DEFAULT_ABOUT, 10] });
+const NO_PICTURE = Object.freeze({ symbol: null, symbolId: null });
+// One item, or null. A string, or an object without `symbol`, asks the hub to
+// pick; `symbol: null` is no picture; a symbol must be a table word, or a word
+// the table lacks with a positive library id. `lenient` (reading what is
+// stored) picks again for a symbol the table no longer knows.
+function listItem(item, lenient) {
+  const object = item !== null && typeof item === 'object' && !Array.isArray(item);
+  const raw = typeof item === 'string' ? item : object ? item.label : null;
+  if (typeof raw !== 'string') return null;
+  const label = raw.trim();
+  if (!label || label.length > 40 || CONTROL.test(label) || /[\u007f<>]/.test(label)) return null;
+  if (!object || item.symbol === undefined) return { label, ...pickPicture(label) };
+  if (item.symbol === null) return { label, ...NO_PICTURE };
+  const picture = tablePicture(item.symbol, item.symbolId);
+  if (picture) return { label, ...picture };
+  return lenient ? { label, ...pickPicture(label) } : null;
+}
+// A clean list or null: one bad item refuses the whole list; duplicates
+// (ignoring case) are dropped.
+function itemList(value, maxItems, lenient = false) {
+  if (!Array.isArray(value) || value.length > maxItems) return null;
+  const seen = new Set(), list = [];
+  for (const raw of value) {
+    const item = listItem(raw, lenient);
+    if (!item) return null;
+    if (!seen.has(item.label.toLowerCase())) { seen.add(item.label.toLowerCase()); list.push(item); }
+  }
+  return list;
+}
+// What GET /settings serves: the stored list, else the default, as objects.
+// A list stored before the About me cap keeps its first ten.
 function chatLists(dataDir) {
   let stored = {};
   try { stored = JSON.parse(fs.readFileSync(path.join(dataDir, 'app-settings.json'), 'utf8')) || {}; } catch { /* the defaults */ }
-  return Object.fromEntries(Object.entries(LISTS).map(([key, fallback]) => [key, itemList(stored[key]) || [...fallback]]));
+  return Object.fromEntries(Object.entries(LISTS).map(([key, [fallback, max]]) => {
+    const value = Array.isArray(stored[key]) && stored[key].length <= 20 ? stored[key].slice(0, max) : stored[key];
+    return [key, itemList(value, max, true) || itemList(fallback, max, true)];
+  }));
 }
 // The same door as the likes; each key moves on its own.
 function applyListsSetting(stored, incoming, fetchSite) {
   const next = { ...stored };
   if (fetchSite !== undefined && fetchSite !== 'same-origin' && fetchSite !== 'none') return next;
-  for (const key of Object.keys(LISTS)) {
-    const list = incoming && Object.hasOwn(incoming, key) ? itemList(incoming[key]) : null;
+  for (const [key, [, max]] of Object.entries(LISTS)) {
+    const list = incoming && Object.hasOwn(incoming, key) ? itemList(incoming[key], max) : null;
     if (list) next[key] = list;
   }
   return next;

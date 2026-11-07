@@ -497,6 +497,23 @@ function choose({ label = '', say = '', symbol, picture } = {}, people = current
   return { word: negationGuard(l, s, FALLBACK) };
 }
 function pickSymbol(choice = {}) { return choose(choice).word; }
+// A line of her own pages (spec 2026-11-07 §2/§6): the hub's pick for its words,
+// as `{ symbol, symbolId }`. A table word takes the table's id (null for a drawn
+// concept); a word the table lacks keeps the library id the word index found;
+// the bubble (`chat`) or a pick with no picture is no picture at all.
+function pickPicture(label) {
+  const pick = choose({ label, say: label });
+  if (!pick || pick.word === FALLBACK || typeof pick.word !== 'string') return { symbol: null, symbolId: null };
+  if (vocabulary().byWord.has(pick.word)) return { symbol: pick.word, symbolId: conceptId(pick.word) };
+  return Number.isSafeInteger(pick.id) && pick.id > 0 ? { symbol: pick.word, symbolId: pick.id } : { symbol: null, symbolId: null };
+}
+// A picture word a partner typed or stored: a table word (its id, or null for a
+// drawn concept), or a word the table lacks with a positive library id; else null.
+function tablePicture(symbol, symbolId) {
+  if (typeof symbol !== 'string' || !symbol || symbol.length > 64 || /[\x00-\x1f<>]/.test(symbol)) return null;
+  if (vocabulary().byWord.has(symbol)) return { symbol, symbolId: conceptId(symbol) };
+  return Number.isSafeInteger(symbolId) && symbolId > 0 ? { symbol, symbolId } : null;
+}
 // True when the model named a picture the hub refused for the label's own
 // (test mode counts these; the words are never changed).
 function symbolRejected({ label = '', say = '', symbol } = {}) {
@@ -636,5 +653,5 @@ function createSymbolWarmer({ ids, isCached, fetchOne, delayMs = 250, maxFailure
   };
 }
 
-module.exports = { symbolWords, conceptId, pickSymbol, symbolRejected, withSymbols, vocabularyIds, createSymbolWarmer, normal,
+module.exports = { symbolWords, conceptId, pickSymbol, pickPicture, tablePicture, symbolRejected, withSymbols, vocabularyIds, createSymbolWarmer, normal,
   setLexicon, setPeople, pictureCandidates, createPictureWarmer };
