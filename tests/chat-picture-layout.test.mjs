@@ -205,9 +205,15 @@ test('the Chat page lays pictures out by board law and keeps every page free of 
     assert.equal(tiles.find(tile => tile.type === 'yes').symbol, 'yes'); assert.equal(tiles.find(tile => tile.type === 'no').symbol, 'no');
     // Yes and No are her boards' pair (spec §11): a Yes or No reply shares the corner's picture; nothing else repeats.
     const pair = new Set([tiles.find(tile => tile.type === 'yes').symbolId, tiles.find(tile => tile.type === 'no').symbolId]);
-    const shown = tiles.filter(tile => tile.picture && !(tile.type === 'response' && pair.has(tile.symbolId))).map(tile => tile.symbolId);
+    // The marked mode tiles pair with their rail tiles (spec 2026-11-07 §3): the question bubble, the drawn comment bubble.
+    const look = tile => tile.symbolId || 'drawn:' + tile.symbol;
+    const shown = tiles.filter(tile => tile.picture && tile.type !== 'mode' && !(tile.type === 'response' && pair.has(tile.symbolId))).map(look);
     assert.equal(new Set(shown).size, shown.length, `${viewport}: no two tiles share a picture (${shown})`);
+    const page = Object.fromEntries(tiles.filter(tile => ['page', 'mode'].includes(tile.type)).map(tile => [tile.text, tile]));
+    assert.equal(page['Ask a question'].symbolId, page['My questions'].symbolId); assert.equal(Number(page['Ask a question'].symbolId), id('question'));
+    for (const text of ['My comments', 'Make a comment']) assert.deepEqual([page[text].symbol, page[text].picture.tag], ['comment', 'svg'], `${viewport}: ${text}`);
     for (const tile of tiles.filter(tile => tile.picture)) {
+      if (tile.symbol === 'comment') continue;
       assert.match(tile.picture.src || '', /^\/symbol\/\d+$/, tag(tile));
       assert.ok(tile.font >= 44 - 0.5, `${tag(tile)} ${tile.font}px is under the 44 px floor`);
       assert.ok(tile.fits, `${tag(tile)} does not fit at ${tile.font}px`);

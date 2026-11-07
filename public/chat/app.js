@@ -3,7 +3,7 @@ import { createMicrophone } from './capture.js';
 import { createChatVoice } from './voice.js';
 import { createTurnMetrics } from './metrics.js';
 import { createChatStorage } from './storage.js';
-import { attachSymbol, resolveSymbol, loadVocabulary, hasVocabulary, planPictures, attachPicture, attachBadge, placeBadge } from './symbols.js';
+import { attachSymbol, resolveSymbol, loadVocabulary, hasVocabulary, planPictures, attachPicture, attachBadge, placeBadge, badgeOf } from './symbols.js';
 import { fitTile } from './tile-fit.js';
 import { GRID, fixedTiles, replyAreas, pageCells, paginate, BAR_BACK, backTarget, createBackStack } from './frame.js';
 import { createOptionsReader } from './prompt.js';
@@ -297,6 +297,16 @@ async function control(type, extra = {}) {
 }
 function diagnostic(text) { diagnosticLine = text; paintDiagnostics(); }
 
+// The AI mark (spec 2026-11-07 §4): every reply of a batch the hub reports as
+// `generated: true` carries it; a batch the hub built without the model (the
+// yes-or-no pair, a "this or that" split, letters and numbers, the guarded
+// templates, the fallback sets) carries none.
+function marked(result) {
+  const choices = result?.choices;
+  if (!Array.isArray(choices)) return choices;
+  const generated = result.generated === true;
+  return choices.map(choice => choice && typeof choice === 'object' ? { ...choice, badge: generated ? 'ai' : undefined } : choice);
+}
 const controller = createChatController({
   onTiming: timingEvent,
   requestChoices: async ({ text, signal }) => {
@@ -311,7 +321,7 @@ const controller = createChatController({
     metrics.observe(timing, { choicesServerMs: result.timings?.totalMs });
     stagedMeta = { handle: timing, kind: result.kind, usage: result.usage, symbolRejected: result.symbolRejected, pictureWarm: result.pictureWarm,
       shape: result.shape, recallRejected: result.recallRejected, world: result.world };
-    return result;
+    return { ...result, choices: marked(result) };
   },
   // A failed reply fails the turn only (spec 2026-10-28 §14): the session, the
   // audio socket, the microphone, the ear and a press window stay; the hub's
@@ -463,7 +473,8 @@ function paintPictures(grid, turn) {
   const byLabel = new Map();
   entries.forEach((entry, i) => { const key = replyKey(entry); if (key !== null) byLabel.set(key, plan[i]); });
   if (byLabel.size || turn !== paintedReplies.turn) paintedReplies = { turn, byLabel };
-  tiles.forEach((el, i) => { attachPicture(el, plan[i], fit); attachBadge(el, plan[i] ? entries[i].badge : null, pictureVariant); });
+  // One badge a tile (spec 2026-11-07 §4): a Yes/No check mark or cross outranks the AI mark.
+  tiles.forEach((el, i) => { attachPicture(el, plan[i], fit); attachBadge(el, badgeOf(entries[i], plan[i]), pictureVariant); });
 }
 // A tile's words and picture by board law, then a Yes/No check-mark or cross badge on its picture (§11).
 function fit(el) { fitTile(el); placeBadge(el); }
@@ -518,7 +529,7 @@ function requestMade(state) {
   function ask(kind, abort) {
     json(`${API}/choices`, { method: 'POST', body: JSON.stringify({ text, context, mode: kind }), signal: abort.signal }).then(result => {
       if (made.turn !== turn || controller.state.turn !== turn) return;
-      const set = cleanChoices(result?.choices, `${kind}-${turn}`);
+      const set = cleanChoices(marked(result), `${kind}-${turn}`);
       if (!set.length) return;
       made[kind] = Object.freeze(set);
       voice.prefetch(set, { role: 'her' });
@@ -552,7 +563,7 @@ function somethingElse() {
     again = null;
     const previous = modeView; modeView = null;
     // The replaced batch redraws through the controller like any reveal (250 ms settle first).
-    if (!controller.replace(result?.choices, turn)) modeView = previous;
+    if (!controller.replace(marked(result), turn)) modeView = previous;
   }).catch(() => { if (again === abort) again = null; });
 }
 
@@ -571,7 +582,8 @@ function shownReply(item) {
   const side = label === 'yes' ? 'yes' : label === 'no' ? 'no' : null;
   if (!side) return item;
   const phrase = answered[side];
-  return { ...item, label: phrase.label, say: phrase.say, ...(answered.feeling ? { symbol: phrase.symbol, symbolId: phrase.symbolId, badge: side } : { symbol: side, symbolId: undefined }) };
+  // No tile of the yes-or-no pair, merged or not, carries the AI mark (spec 2026-11-07 §6).
+  return { ...item, label: phrase.label, say: phrase.say, ...(answered.feeling ? { symbol: phrase.symbol, symbolId: phrase.symbolId, badge: side } : { symbol: side, symbolId: undefined, badge: undefined }) };
 }
 function sayCorner(side) {
   const state = controller.state, full = answersOn(state) ? answered[side] : null;
@@ -780,7 +792,8 @@ function renderGrid(state) {
     const replies = state.choices.length > 0 && !state.stale;
     grid.append(tile(fixed.more.label, 'static', () => controller.sayFixed(SPOKEN.more), fixed.more.area, SPOKEN.more));
     for (const key of ['ask', 'comment']) {
-      const el = tile(fixed[key].label, `mode${modeView === key ? ' on' : ''}${replies ? '' : ' off'}`, replies ? () => toggleMode(key) : null, fixed[key].area, fixed[key].label);
+      // The model writes what a mode offers: the AI mark, lit or dimmed (spec 2026-11-07 §4).
+      const el = tile(fixed[key].label, `mode${modeView === key ? ' on' : ''}${replies ? '' : ' off'}`, replies ? () => toggleMode(key) : null, fixed[key].area, fixed[key].label, { badge: 'ai' });
       el.dataset.mode = key; grid.append(el);
     }
     grid.append(tile(fixed.else.label, 'static', somethingElse, fixed.else.area, SPOKEN.else));
@@ -1217,7 +1230,7 @@ function replacementFor(data, question) {
   stagedBatch(record).then(result => {
     if (mine !== lifecycle || staging !== record) return;
     staging = null;
-    if (!controller.stageReplacement(result?.choices)) return;
+    if (!controller.stageReplacement(marked(result))) return;
     diagnostic(`Question: ${question} (replies waiting for a neutral moment)`);
     setTimeout(swapAtNeutral, NEUTRAL_CHECK_MS);
   }, error => {

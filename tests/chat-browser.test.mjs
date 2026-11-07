@@ -1054,7 +1054,10 @@ test('Yes and No in full (spec 2026-10-28 §11): the phrases land in place with 
   const lastSpoken = async text => { const before = saidCount(); for (let i = 0; i < 200 && saidCount() === before; i++) await page.waitForTimeout(20);
     assert.equal(records.filter(record => record.content?.spoken).at(-1)?.content.spoken, text); };
 
+  // No tile of the yes-or-no pair, merged or not, ever shows the AI mark (spec 2026-11-07 §6).
+  const sparkles = () => page.locator('#grid .tile.response .chat-badge[data-side="ai"]').count();
   await ask('w-1', 'are you hungry?');
+  assert.equal(await sparkles(), 0, 'the local Yes and No carry no AI mark');
   const cornerBefore = await page.locator('#grid .tile.yes').evaluate(el => [el.querySelector('.label').textContent, el.dataset.symbolId]);
   assert.deepEqual(cornerBefore, ['yes', '5584'], 'the corner shows the check mark');
   assert.equal((await tileOf('yes')).symbolId, '5584', 'the plain Yes reply shows the check mark too');
@@ -1067,11 +1070,12 @@ test('Yes and No in full (spec 2026-10-28 §11): the phrases land in place with 
   await page.waitForFunction(() => document.querySelector('#grid .tile.response .label').textContent === "Yes, I'm hungry");
   assert.deepEqual(await labels(), ["Yes, I'm hungry", "No, I'm not hungry"]);
   assert.ok(await page.evaluate(n => document.querySelectorAll('#grid .tile').length === n && window.__kept.every(el => el.isConnected), kept), 'no tile was redrawn');
-  await page.waitForFunction(() => [...document.querySelectorAll('#grid .chat-badge')].every(img => img.complete));
+  await page.waitForFunction(() => [...document.querySelectorAll('#grid img.chat-badge')].every(img => img.complete));
   const yes = await tileOf('yes'), no = await tileOf('no');
   assert.equal(yes.symbolId, '4962'); assert.equal(no.symbolId, '4962', 'both show the feeling');
   assert.deepEqual([yes.badge.src, yes.badge.side, no.badge.src, no.badge.side], ['/symbol/5584', 'yes', '/symbol/5526', 'no'], 'the check mark and the cross as badges');
   assert.ok(yes.badge.shown && yes.badge.smaller && yes.badge.overlaps, `a small badge on the picture: ${JSON.stringify(yes.badge)}`);
+  assert.equal(await sparkles(), 0, 'the answers in full carry their check mark or cross, never the AI mark');
   assert.deepEqual(await page.locator('#grid .tile.yes').evaluate(el => [el.querySelector('.label').textContent, el.dataset.symbolId]), cornerBefore, 'the corner keeps its look');
   // The corners speak the phrase; the middle Yes speaks and records it.
   await page.locator('#grid .tile.no').click(); await lastSpoken("No, I'm not hungry");
@@ -1101,6 +1105,7 @@ test('Yes and No in full (spec 2026-10-28 §11): the phrases land in place with 
   assert.equal('answered' in bare().content, false, 'a bare Yes/No never counts as answered');
   const plainYes = await tileOf('yes');
   assert.equal(plainYes.symbolId, '5584'); assert.equal(plainYes.badge, null);
+  assert.equal(await sparkles(), 0, 'without a feeling: the check mark alone, no AI mark');
   const touch = async selector => { const cdp = await f.context.newCDPSession(page), box = await page.locator(selector).boundingBox();
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: box.x + box.width / 2, y: box.y + box.height / 2, id: 1 }] });
     await page.waitForTimeout(60); await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); };
@@ -1122,6 +1127,88 @@ test('Yes and No in full (spec 2026-10-28 §11): the phrases land in place with 
   await f.emit(page, answer('w-4', 'tired', ["Yes, I'm tired", "No, I'm not tired"]));
   await page.waitForTimeout(150);
   assert.deepEqual(await labels(), ['Music', 'A story']);
+  assert.deepEqual(f.errors, []);
+});
+
+test('the AI mark (spec 2026-11-07 §3-§4): the mode tiles always carry the sparkles and pair with the rail; every reply of a generated batch, a mode set or a generated Something else carries them; a local yes-or-no pair or local set never does', { timeout: 90000 }, async t => {
+  const f = await earFixture(t);
+  const vocabulary = await fs.readFile(path.join(root, 'public/chat/vocabulary.json'));
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  await f.context.route('**/chat/vocabulary.json', route => route.fulfill({ status: 200, contentType: 'application/json', body: vocabulary }));
+  await f.context.route('**/symbol/**', route => route.fulfill({ status: 200, contentType: 'image/png', body: png }));
+  let elseGenerated = false;
+  f.fixture.choices = body => body.mode ? { kind: 'generated', generated: true, mode: body.mode, choices: [{ label: 'Why?', say: 'Why?' }, { label: 'What next?', say: 'What happens next?' }] }
+    : body.avoid ? (elseGenerated ? { kind: 'generated', generated: true, choices: [{ label: 'Juice', say: 'Juice' }, { label: 'Water', say: 'Water' }] }
+      : { kind: 'guarded', generated: false, choices: [{ label: 'Tea', say: 'Tea' }, { label: 'Milk', say: 'Milk' }] })
+      : { kind: 'alternatives', choices: [{ label: 'Music', say: 'Music' }, { label: 'A story', say: 'A story' }] };
+  const page = await f.open();
+  // The labels of the tiles that show the sparkles, and whether each mark is placed and visible.
+  const marked = () => page.evaluate(() => [...document.querySelectorAll('#grid .tile')].filter(el => el.querySelector('.chat-badge[data-side="ai"]'))
+    .map(el => el.querySelector('.label').textContent));
+  const hidden = () => page.evaluate(() => [...document.querySelectorAll('#grid .tile:not(.picture-set-aside) .chat-badge[data-side="ai"]')]
+    .filter(badge => getComputedStyle(badge).display === 'none' || !(badge.getBoundingClientRect().width > 0)).length);
+  await page.waitForFunction(() => document.querySelectorAll('#grid .tile.mode .chat-badge[data-side="ai"]').length === 2);
+  assert.deepEqual(await marked(), ['Ask a question', 'Make a comment'], 'dimmed, before any question, the mode tiles carry the mark');
+  assert.equal(await page.locator('#grid .tile.mode.off').count(), 2);
+  // A tile whose picture is set aside for its words shows no badge, as the check mark does (§4).
+  await page.waitForFunction(() => [...document.querySelectorAll('#grid .tile:not(.picture-set-aside) .chat-badge')].every(badge => badge.style.width));
+  assert.equal(await hidden(), 0, 'each mark is placed on its picture');
+  // The rail and the modes (§3): the question bubble twice, the drawn comment bubble twice.
+  const look = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#grid .tile.page, #grid .tile.mode')]
+    .map(el => [el.querySelector('.label').textContent, [el.dataset.symbol, el.dataset.symbolId || null, el.dataset.picture]])));
+  assert.deepEqual(look['My questions'], ['question', '7217', 'library']); assert.deepEqual(look['Ask a question'], ['question', '7217', 'library']);
+  assert.deepEqual(look['My comments'], ['comment', null, 'drawn']); assert.deepEqual(look['Make a comment'], ['comment', null, 'drawn']);
+  assert.equal(await page.locator('#grid .tile.page .chat-badge').count(), 0, 'her own rail tiles carry no mark');
+
+  async function reveal(id, text, batch) {
+    await f.emit(page, { type: 'utterance-sealed', ear: true, earId: 'ear-1', windowId: id, seq: 1, text, windowText: text, generation: f.EAR });
+    await f.emit(page, { type: 'batch-sealed', generation: f.EAR, windowId: id, seq: 1, ...batch });
+    await page.waitForFunction(first => document.querySelector('#grid .tile.response .label')?.textContent === first, batch.choices[0].label);
+  }
+  const responses = () => page.evaluate(() => [...document.querySelectorAll('#grid .tile.response')].filter(el => el.querySelector('.chat-badge[data-side="ai"]'))
+    .map(el => el.querySelector('.label').textContent));
+  // A generated batch: every reply carries the mark.
+  await reveal('w-1', 'what do you want to do?', { kind: 'generated', generated: true, choices: [{ label: 'Draw', say: 'I want to draw.' }, { label: 'Go outside', say: 'I want to go outside.' }] });
+  await page.waitForFunction(() => document.querySelectorAll('#grid .tile.response .chat-badge[data-side="ai"]').length === 2);
+  assert.deepEqual(await responses(), ['Draw', 'Go outside']);
+  await page.waitForFunction(() => [...document.querySelectorAll('#grid .tile.response:not(.picture-set-aside) .chat-badge')].every(badge => badge.style.width));
+  assert.ok(await page.evaluate(() => [...document.querySelectorAll('#grid .tile.response .chat-badge[data-side="ai"]')]
+    .some(badge => getComputedStyle(badge).display !== 'none' && badge.getBoundingClientRect().width > 10)), 'a reply shows its mark on its picture');
+  assert.equal(await hidden(), 0);
+  assert.equal(await page.locator('#grid .tile.mode.off').count(), 0, 'lit now');
+  assert.equal(await page.locator('#grid .tile.mode .chat-badge[data-side="ai"]').count(), 2, 'lit, the mode tiles still carry the mark');
+  // A made set (the hub reports it generated): its replies carry the mark.
+  await page.locator('#grid .tile.mode[data-mode="ask"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('#grid .tile.made .chat-badge[data-side="ai"]').length === 2);
+  assert.deepEqual(await page.locator('#grid .tile.made .label').allTextContents(), ['Why?', 'What next?']);
+  await page.locator('#grid .tile.mode[data-mode="ask"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('#grid .tile.response').length === 2);
+  // Something else the hub built without the model: no mark.
+  await page.locator('#grid .tile.static', { hasText: 'Something else' }).click();
+  await page.waitForFunction(() => document.querySelector('#grid .tile.response .label')?.textContent === 'Tea');
+  await page.waitForTimeout(100);
+  assert.deepEqual(await responses(), [], 'a guarded batch carries no mark');
+  // Something else the model wrote: marked.
+  elseGenerated = true;
+  await page.locator('#grid .tile.static', { hasText: 'Something else' }).click();
+  await page.waitForFunction(() => document.querySelector('#grid .tile.response .label')?.textContent === 'Juice');
+  await page.waitForFunction(() => document.querySelectorAll('#grid .tile.response .chat-badge[data-side="ai"]').length === 2);
+  // Back brings the earlier generated batch with its marks.
+  await page.locator('#back').click();
+  await page.waitForFunction(() => document.querySelector('#grid .tile.response .label')?.textContent === 'Tea');
+  assert.deepEqual(await responses(), []);
+  await page.locator('#back').click();
+  await page.waitForFunction(() => document.querySelector('#grid .tile.response .label')?.textContent === 'Draw');
+  await page.waitForFunction(() => document.querySelectorAll('#grid .tile.response .chat-badge[data-side="ai"]').length === 2);
+  // A local yes-or-no pair and a local set (no `generated`): no mark.
+  await reveal('w-2', 'are you hungry?', { kind: 'yes-no', choices: [{ label: 'Yes', say: 'Yes.' }, { label: 'No', say: 'No.' }] });
+  await page.waitForTimeout(100);
+  assert.deepEqual(await responses(), [], 'the yes-or-no pair never carries the mark');
+  await reveal('w-3', 'tea or milk?', { kind: 'alternatives', choices: [{ label: 'Coffee', say: 'Coffee' }, { label: 'Cocoa', say: 'Cocoa' }] });
+  await page.waitForTimeout(100);
+  assert.deepEqual(await responses(), [], 'a "this or that" split carries no mark');
+  assert.deepEqual(await marked(), ['Ask a question', 'Make a comment']);
+  assert.equal(await hidden(), 0);
   assert.deepEqual(f.errors, []);
 });
 
