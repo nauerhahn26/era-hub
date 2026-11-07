@@ -146,10 +146,20 @@ test("Settings: 'Where the door goes' persists; a site opens in its OWN window, 
   await home();
   await page.click("#appGrid a.app:has-text('Settings')");
   await page.waitForURL(/\/settings\//, { waitUntil: "commit", timeout: 60000 });
+  // since the 10/23 Settings reorganisation (public/settings/settings-layout.js)
+  // every card sits in a hidden section; the door card lives in "Apps &
+  // navigation", so open it from the sidebar first — and again after the
+  // reload, which lands on whatever section the page routes to
+  const openApps = async () => {
+    await page.locator('#settingsNav a[href="#apps"]').click({ timeout: 30000 });
+    await page.waitForFunction(() => document.querySelector('#settingsNav a[aria-current="page"]')?.getAttribute("href") === "#apps", null, { timeout: 30000 });
+  };
+  await openApps();
   await page.locator("#exitTo").waitFor({ state: "visible", timeout: 30000 });
   await page.click("#exitTo button[data-exit=home]");
   await vm.waitFor(() => vm.hubGet("/settings")?.exitTo === "home" && { ok: 1 }, { what: "exitTo=home on disk" });
   await page.reload();
+  await openApps();
   await page.locator("#exitTo").waitFor({ state: "visible", timeout: 30000 });
   assert.ok(await page.locator("#exitTo button[data-exit=home]").evaluate((b) => b.classList.contains("sel")), "selection survives a reload");
   vm.shot("settings-door");
