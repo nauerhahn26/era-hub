@@ -171,22 +171,24 @@ function applyLikesSetting(stored, incoming, fetchSite) {
 // My questions, My comments and About me, edited in the partner dialog one
 // item per line: up to twenty items of forty characters (About me ten, spec
 // 2026-11-07 §2). Each item is `{ label, symbol, symbolId }`: the picture is
-// chosen when the line is saved (§2/§6), never guessed at the reveal. Generic
-// defaults; family facts are entered on the device, never shipped.
-const DEFAULT_QUESTIONS = Object.freeze(['How are you?', 'What are we doing today?', 'Did you have fun?', 'Can I have a turn?', "What's for dinner?",
-  'Where are we going?', 'Who is coming?', 'Can we play?', 'Is it time yet?', "What's that?"]);
-const DEFAULT_COMMENTS = Object.freeze(["That's cool!", 'That sounds fun!', 'I love that!', 'No way!', 'Silly!', "I'm tired", "I'm hungry",
-  'Again, please', "I don't like that", 'Wait for me']);
+// chosen when the line is saved (§2/§6), never guessed at the reveal, and is
+// a table word or none (§8: only the table is pre-warmed). Generic defaults,
+// each pinned to a table word; family facts are entered on the device, never shipped.
+const pinned = pairs => Object.freeze(pairs.map(([label, symbol]) => Object.freeze({ label, symbol })));
+const DEFAULT_QUESTIONS = pinned([['How are you?', 'feelings'], ['What are we doing today?', 'today'], ['Did you have fun?', 'fun'],
+  ['Can I have a turn?', 'my turn'], ["What's for dinner?", 'dinner'], ['Where are we going?', 'go'], ['Who is coming?', 'come here'],
+  ['Can we play?', 'play'], ['Is it time yet?', 'time'], ["What's that?", 'point']]);
+const DEFAULT_COMMENTS = pinned([["That's cool!", 'cool'], ['That sounds fun!', 'fun'], ['I love that!', 'love'], ['No way!', 'surprised'],
+  ['Silly!', 'silly'], ["I'm tired", 'tired'], ["I'm hungry", 'hungry'], ['Again, please', 'more'], ["I don't like that", "don't like"], ['Wait for me', 'wait']]);
 // About me: whole first-person sentences with their pictures; "Ask me anything" has none.
-const DEFAULT_ABOUT = Object.freeze([['I talk with my eyes', 'eyes'], ['I go to school', 'school'], ['I love music', 'music'], ['I love books', 'book'],
-  ['I like to draw', 'draw'], ['I like movies', 'cinema'], ['I like to be silly', 'silly'], ['Ask me anything', null]]
-  .map(([label, symbol]) => Object.freeze({ label, symbol })));
+const DEFAULT_ABOUT = pinned([['I talk with my eyes', 'eyes'], ['I go to school', 'school'], ['I love music', 'music'], ['I love books', 'book'],
+  ['I like to draw', 'draw'], ['I like movies', 'cinema'], ['I like to be silly', 'silly'], ['Ask me anything', null]]);
 const LISTS = Object.freeze({ chatQuestions: [DEFAULT_QUESTIONS, 20], chatComments: [DEFAULT_COMMENTS, 20], chatAbout: [DEFAULT_ABOUT, 10] });
 const NO_PICTURE = Object.freeze({ symbol: null, symbolId: null });
 // One item, or null. A string, or an object without `symbol`, asks the hub to
-// pick; `symbol: null` is no picture; a symbol must be a table word, or a word
-// the table lacks with a positive library id. `lenient` (reading what is
-// stored) picks again for a symbol the table no longer knows.
+// pick; `symbol: null` is no picture; a symbol must be a table word (§8).
+// `lenient` (reading what is stored) reads an off-table symbol (a word the
+// table no longer has, or a word-index pick saved before §8) as no picture.
 function listItem(item, lenient) {
   const object = item !== null && typeof item === 'object' && !Array.isArray(item);
   const raw = typeof item === 'string' ? item : object ? item.label : null;
@@ -195,9 +197,9 @@ function listItem(item, lenient) {
   if (!label || label.length > 40 || CONTROL.test(label) || /[\u007f<>]/.test(label)) return null;
   if (!object || item.symbol === undefined) return { label, ...pickPicture(label) };
   if (item.symbol === null) return { label, ...NO_PICTURE };
-  const picture = tablePicture(item.symbol, item.symbolId);
+  const picture = tablePicture(item.symbol);
   if (picture) return { label, ...picture };
-  return lenient ? { label, ...pickPicture(label) } : null;
+  return lenient ? { label, ...NO_PICTURE } : null;
 }
 // A clean list or null: one bad item refuses the whole list; duplicates
 // (ignoring case) are dropped.

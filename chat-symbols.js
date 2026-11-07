@@ -497,22 +497,20 @@ function choose({ label = '', say = '', symbol, picture } = {}, people = current
   return { word: negationGuard(l, s, FALLBACK) };
 }
 function pickSymbol(choice = {}) { return choose(choice).word; }
-// A line of her own pages (spec 2026-11-07 §2/§6): the hub's pick for its words,
-// as `{ symbol, symbolId }`. A table word takes the table's id (null for a drawn
-// concept); a word the table lacks keeps the library id the word index found;
-// the bubble (`chat`) or a pick with no picture is no picture at all.
+// A line of her own pages (spec 2026-11-07 §2/§6/§8): the hub's pick for its
+// words, as `{ symbol, symbolId }`, kept only when it is a table word (the
+// table's id, null for a drawn concept): only the table is pre-warmed, so an
+// off-table word-index pick, the bubble (`chat`) or no pick is no picture.
 function pickPicture(label) {
   const pick = choose({ label, say: label });
-  if (!pick || pick.word === FALLBACK || typeof pick.word !== 'string') return { symbol: null, symbolId: null };
-  if (vocabulary().byWord.has(pick.word)) return { symbol: pick.word, symbolId: conceptId(pick.word) };
-  return Number.isSafeInteger(pick.id) && pick.id > 0 ? { symbol: pick.word, symbolId: pick.id } : { symbol: null, symbolId: null };
+  if (!pick || pick.word === FALLBACK || typeof pick.word !== 'string' || !vocabulary().byWord.has(pick.word)) return { symbol: null, symbolId: null };
+  return { symbol: pick.word, symbolId: conceptId(pick.word) };
 }
-// A picture word a partner typed or stored: a table word (its id, or null for a
-// drawn concept), or a word the table lacks with a positive library id; else null.
-function tablePicture(symbol, symbolId) {
+// A picture word a partner typed or stored (§8): a table word with the table's
+// id (null for a drawn concept); a word off the table, with or without an id, is null.
+function tablePicture(symbol) {
   if (typeof symbol !== 'string' || !symbol || symbol.length > 64 || /[\x00-\x1f<>]/.test(symbol)) return null;
-  if (vocabulary().byWord.has(symbol)) return { symbol, symbolId: conceptId(symbol) };
-  return Number.isSafeInteger(symbolId) && symbolId > 0 ? { symbol, symbolId } : null;
+  return vocabulary().byWord.has(symbol) ? { symbol, symbolId: conceptId(symbol) } : null;
 }
 // True when the model named a picture the hub refused for the label's own
 // (test mode counts these; the words are never changed).
