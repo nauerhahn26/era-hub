@@ -142,3 +142,34 @@ which tiles the model wrote.
   without one the check mark or the cross is the picture itself and gets no
   badge. In short: no tile of the yes-or-no pair, merged or not, shows the
   AI mark. The §11 browser case asserts it.
+
+## 7. Review on a scratch hub (11/7): two amendments
+
+Screenshots at the tablet's 1280×800 and the eye-gaze device's 1920×1080:
+
+- **The AI mark on a tile with no picture.** The bottom row is short, so
+  Ask a question and Make a comment set their picture aside at both sizes
+  (as Tell me more and Something else already do), and a mark that lives
+  only on a picture never shows there. Amends §4: the mark marks the tile,
+  not the picture. On a tile that shows a picture it sits on the picture's
+  corner as the check mark does; on a tile with no picture (set aside, or a
+  words-only reply) it sits in the tile's own top-right corner on its white
+  disc, small (about an eighth of the tile's height, never under 28 px nor
+  over 56 px), over the padding so the words are not refitted. The Yes/No
+  badge keeps needing a picture.
+- **Her pages keep their pictures.** Under the default fit law a line such
+  as "I love music" fits at 74 px stacked and leaves the picture a speck, so
+  the picture is set aside: at 1280×800 seven of her ten About me tiles
+  showed words alone, and at 1920×1080 two pictures were specks. Dad asked
+  for a picture that means each line, so the items of her three pages (and
+  only those: `.tile.item`) fit with the `stacked-big` profile that
+  tile-fit.js already carries as a candidate: the label takes at most 70 %
+  of the height and steps down through 60 px to the 44 px floor before the
+  picture is set aside, so the picture keeps at least 30 %. Replies, the
+  rail, the corners and the bottom row keep the default law. The overseer's
+  call; the maintainer can revert it with a word.
+- Tests: chat-picture-layout (a page item at 1280×800 keeps its picture and
+  shrinks its words; a reply does not change), chat-browser (the mode tiles'
+  mark is placed and visible with the picture set aside; a words-only
+  generated reply carries the corner mark; a yes/no badge without a picture
+  stays hidden).
