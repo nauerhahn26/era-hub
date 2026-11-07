@@ -1125,6 +1125,18 @@ test('Yes and No in full (spec 2026-10-28 §11): the phrases land in place with 
   assert.deepEqual([yes.badge.src, yes.badge.side, no.badge.src, no.badge.side], ['/symbol/5584', 'yes', '/symbol/5526', 'no'], 'the check mark and the cross as badges');
   assert.ok(yes.badge.shown && yes.badge.smaller && yes.badge.overlaps, `a small badge on the picture: ${JSON.stringify(yes.badge)}`);
   assert.equal(await sparkles(), 0, 'the answers in full carry their check mark or cross, never the AI mark');
+  // The Yes/No badge keeps needing a picture (spec 2026-11-07 §7): at every size it shows exactly when the picture does.
+  const yesNoBadges = () => page.evaluate(() => [...document.querySelectorAll('#grid .tile .chat-badge:is([data-side="yes"], [data-side="no"])')].map(badge => {
+    const tile = badge.closest('.tile'), picture = tile.querySelector('.chat-symbol');
+    return { label: tile.querySelector('.label').textContent, picture: !!picture && !tile.classList.contains('picture-set-aside'), shown: getComputedStyle(badge).display !== 'none' };
+  }));
+  for (const viewport of [{ width: 1280, height: 800 }, { width: 1280, height: 400 }, { width: 1600, height: 1000 }]) {
+    await page.setViewportSize(viewport); await page.waitForTimeout(80);
+    const badges = await yesNoBadges();
+    assert.equal(badges.length, 2, JSON.stringify(badges));
+    for (const badge of badges) assert.equal(badge.shown, badge.picture, `${viewport.width}x${viewport.height}: ${JSON.stringify(badge)}`);
+    if (viewport.height === 400) assert.ok(badges.some(badge => !badge.picture && !badge.shown), `a squeezed tile sets its picture aside and hides the badge: ${JSON.stringify(badges)}`);
+  }
   assert.deepEqual(await page.locator('#grid .tile.yes').evaluate(el => [el.querySelector('.label').textContent, el.dataset.symbolId]), cornerBefore, 'the corner keeps its look');
   // The corners speak the phrase; the middle Yes speaks and records it.
   await page.locator('#grid .tile.no').click(); await lastSpoken("No, I'm not hungry");
@@ -1194,14 +1206,30 @@ test('the AI mark (spec 2026-11-07 §3-§4): the mode tiles always carry the spa
   // The labels of the tiles that show the sparkles, and whether each mark is placed and visible.
   const marked = () => page.evaluate(() => [...document.querySelectorAll('#grid .tile')].filter(el => el.querySelector('.chat-badge[data-side="ai"]'))
     .map(el => el.querySelector('.label').textContent));
-  const hidden = () => page.evaluate(() => [...document.querySelectorAll('#grid .tile:not(.picture-set-aside) .chat-badge[data-side="ai"]')]
+  // The mark marks the tile, not the picture (spec 2026-11-07 §7): every mark is shown, picture or none.
+  const hidden = () => page.evaluate(() => [...document.querySelectorAll('#grid .tile .chat-badge[data-side="ai"]')]
     .filter(badge => getComputedStyle(badge).display === 'none' || !(badge.getBoundingClientRect().width > 0)).length);
+  // Each tile's mark: shown, with a box inside the tile; where it sits (on the picture, or the tile's corner).
+  const marks = selector => page.evaluate(selector => [...document.querySelectorAll(selector)].map(el => {
+    const badge = el.querySelector('.chat-badge[data-side="ai"]'), box = el.getBoundingClientRect(), mark = badge?.getBoundingClientRect();
+    const picture = el.querySelector('.chat-symbol');
+    return { label: el.querySelector('.label').textContent, setAside: el.classList.contains('picture-set-aside'), picture: !!picture && getComputedStyle(picture).display !== 'none',
+      shown: !!badge && getComputedStyle(badge).display !== 'none', width: mark?.width || 0,
+      inside: !!mark && mark.left >= box.left - 0.5 && mark.right <= box.right + 0.5 && mark.top >= box.top - 0.5 && mark.bottom <= box.bottom + 0.5,
+      corner: !!mark && box.right - mark.right < 12 && mark.top - box.top < 12 };
+  }), selector);
   await page.waitForFunction(() => document.querySelectorAll('#grid .tile.mode .chat-badge[data-side="ai"]').length === 2);
   assert.deepEqual(await marked(), ['Ask a question', 'Make a comment'], 'dimmed, before any question, the mode tiles carry the mark');
   assert.equal(await page.locator('#grid .tile.mode.off').count(), 2);
-  // A tile whose picture is set aside for its words shows no badge, as the check mark does (§4).
-  await page.waitForFunction(() => [...document.querySelectorAll('#grid .tile:not(.picture-set-aside) .chat-badge')].every(badge => badge.style.width));
-  assert.equal(await hidden(), 0, 'each mark is placed on its picture');
+  // Every mark is placed (spec 2026-11-07 §7): on its picture, or in the tile's corner when the picture is set aside.
+  await page.waitForFunction(() => [...document.querySelectorAll('#grid .tile .chat-badge[data-side="ai"]')].every(badge => badge.style.width));
+  assert.equal(await hidden(), 0, 'each mark is placed');
+  // At the tablet's 1280x800 the bottom row is short: the mode tiles set their pictures aside and the mark moves to the tile's corner.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.waitForFunction(() => [...document.querySelectorAll('#grid .tile.mode')].every(el => el.classList.contains('picture-set-aside')));
+  for (const mark of await marks('#grid .tile.mode')) assert.ok(mark.setAside && mark.shown && mark.width > 0 && mark.inside && mark.corner, `1280x800: ${JSON.stringify(mark)}`);
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.waitForFunction(() => [...document.querySelectorAll('#grid .tile.mode .chat-badge')].every(badge => badge.style.width));
   // The rail and the modes (§3): the question bubble twice, the drawn comment bubble twice.
   const look = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#grid .tile.page, #grid .tile.mode')]
     .map(el => [el.querySelector('.label').textContent, [el.dataset.symbol, el.dataset.symbolId || null, el.dataset.picture]])));
@@ -1220,7 +1248,7 @@ test('the AI mark (spec 2026-11-07 §3-§4): the mode tiles always carry the spa
   await reveal('w-1', 'what do you want to do?', { kind: 'generated', generated: true, choices: [{ label: 'Draw', say: 'I want to draw.' }, { label: 'Go outside', say: 'I want to go outside.' }] });
   await page.waitForFunction(() => document.querySelectorAll('#grid .tile.response .chat-badge[data-side="ai"]').length === 2);
   assert.deepEqual(await responses(), ['Draw', 'Go outside']);
-  await page.waitForFunction(() => [...document.querySelectorAll('#grid .tile.response:not(.picture-set-aside) .chat-badge')].every(badge => badge.style.width));
+  await page.waitForFunction(() => [...document.querySelectorAll('#grid .tile.response .chat-badge')].every(badge => badge.style.width));
   assert.ok(await page.evaluate(() => [...document.querySelectorAll('#grid .tile.response .chat-badge[data-side="ai"]')]
     .some(badge => getComputedStyle(badge).display !== 'none' && badge.getBoundingClientRect().width > 10)), 'a reply shows its mark on its picture');
   assert.equal(await hidden(), 0);
@@ -1257,6 +1285,15 @@ test('the AI mark (spec 2026-11-07 §3-§4): the mode tiles always carry the spa
   await page.waitForTimeout(100);
   assert.deepEqual(await responses(), [], 'a "this or that" split carries no mark');
   assert.deepEqual(await marked(), ['Ask a question', 'Make a comment']);
+  assert.equal(await hidden(), 0);
+  // A generated batch whose words find no picture (§7): a words-only reply carries the mark in its corner.
+  await reveal('w-4', 'what is it called?', { kind: 'generated', generated: true,
+    choices: ['Zorbly', 'Quixel', 'Blentop', 'Frimpet'].map(label => ({ label, say: label })) });
+  await page.waitForFunction(() => document.querySelectorAll('#grid .tile.response .chat-badge[data-side="ai"]').length === 4
+    && [...document.querySelectorAll('#grid .tile.response .chat-badge')].every(badge => badge.style.width));
+  const wordsOnly = (await marks('#grid .tile.response')).filter(mark => !mark.picture);
+  assert.ok(wordsOnly.length > 0, 'a reply with no picture');
+  for (const mark of wordsOnly) assert.ok(mark.shown && mark.width > 0 && mark.inside && mark.corner, `words only: ${JSON.stringify(mark)}`);
   assert.equal(await hidden(), 0);
   assert.deepEqual(f.errors, []);
 });

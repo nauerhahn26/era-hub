@@ -783,3 +783,19 @@ phrase table all exist; `planPictures` has no concept without an id yet
       38/38, chat-storage-ui 2/2, chat-picture-layout 12/12.
 - [ ] A3 devices: her own ten lines on the two home devices as settings (the
       school device when awake), never in the repo.
+- [x] I3 page: the AI mark in the tile's own top-right corner when the tile
+      shows no picture (set aside, or a words-only reply); her pages' items fit
+      stacked-big (spec §7). Tests first.
+      Built 11/7: `badgeOf` returns `ai` with no plan (never for the yes-or-no
+      pair: an entry of type yes/no or symbol yes/no); a Yes/No badge with no
+      plan is null and `placeBadge` still hides one without a picture.
+      `placeBadge` puts the AI mark at round(height / 8) clamped 28–56 px, 6 px
+      in from the top and right (`CORNER`, anchored by `right` so a tile that
+      narrows after a resize keeps it inside), after `fitTile` in `fit`. `fit`
+      passes `profile: 'stacked-big'` for `.tile.item` only; the branch now
+      takes the 6 px stacked gap out of the label's 70 % so the picture keeps
+      a full 30 % (it measured 28.6 % before). The §4 "set aside shows no mark"
+      assertion is replaced: at 1280×800 the mode tiles set their pictures
+      aside and carry the mark in the corner. chat-symbols 16/16,
+      chat-picture-layout 13/13, chat-browser 18/18 (the six chat suites
+      134/134).

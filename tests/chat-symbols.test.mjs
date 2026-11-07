@@ -257,7 +257,7 @@ test('attachBadge("ai") draws three four-pointed sparkles: violet on the white d
   }
 });
 
-test('badgeOf: yes or no outranks the AI mark; a check-mark or cross picture and a tile without a picture carry none', () => {
+test('badgeOf: yes or no outranks the AI mark; a check-mark or cross picture carries none; the AI mark marks a tile without a picture (§7)', () => {
   assert.equal(setVocabulary(vocabulary), true);
   const plan = word => ({ word, id: 1, kind: 'library', src: '/symbol/1' });
   assert.equal(badgeOf({ badge: 'ai' }, plan('music')), 'ai');
@@ -265,7 +265,13 @@ test('badgeOf: yes or no outranks the AI mark; a check-mark or cross picture and
   assert.equal(badgeOf({ badge: 'no' }, plan('hungry')), 'no');
   assert.equal(badgeOf({ badge: 'ai' }, plan('yes')), null, 'the check mark is the meaning: no sparkle on it');
   assert.equal(badgeOf({ badge: 'ai' }, plan('no')), null);
-  assert.equal(badgeOf({ badge: 'ai' }, null), null, 'no picture, no badge');
+  // The mark marks the tile, not the picture (spec 2026-11-07 §7): a words-only tile carries it in its corner.
+  assert.equal(badgeOf({ badge: 'ai' }, null), 'ai', 'no picture: the AI mark in the tile corner');
+  assert.equal(badgeOf({ badge: 'yes' }, null), null, 'the Yes/No badge keeps needing a picture');
+  assert.equal(badgeOf({ badge: 'no' }, null), null);
+  assert.equal(badgeOf({ badge: 'ai', symbol: 'yes' }, null), null, 'never on the yes-or-no pair');
+  assert.equal(badgeOf({ badge: 'ai', type: 'no' }, null), null);
+  assert.equal(badgeOf(null, null), null);
   assert.equal(badgeOf({}, plan('music')), null);
   assert.equal(badgeOf({ badge: 'other' }, plan('music')), null);
 });
@@ -299,6 +305,46 @@ test('the AI mark sits where the check mark sits, at its size, on the drawn comm
     assert.equal(colour.background, 'rgb(255, 255, 255)', 'the white badge disc');
     assert.equal(colour.fill, 'rgb(138, 92, 246)'); assert.equal(bw.fill, 'rgb(0, 0, 0)');
     for (const item of result) { assert.equal(item.bubbleFill, 'rgb(255, 255, 255)'); assert.equal(item.bubbleStroke, 'rgb(0, 0, 0)'); }
+    await page.close();
+  } finally { await browser.close(); }
+});
+
+test('the AI mark on a tile with no picture sits in the tile\'s own top-right corner, an eighth of its height (28-56 px); a Yes/No badge stays hidden (§7)', async () => {
+  const { chromium } = await import('playwright');
+  const browser = await chromium.launch({ headless: true });
+  const css = (await readFile(new URL('../public/chat/chat.css', import.meta.url), 'utf8')).replace(/^@import[^;]+;/m, '');
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.route('**/*', route => route.abort());
+    await page.setContent(`<style>${css}</style><main id="app"><div id="grid"></div></main>`);
+    const result = await page.evaluate(async ({ moduleURL, vocabulary }) => {
+      const { setVocabulary, planPictures, attachPicture, attachBadge, placeBadge } = await import(moduleURL);
+      setVocabulary(vocabulary);
+      const grid = document.querySelector('#grid'), out = {};
+      const make = (key, label, height, { picture, setAside, side }) => {
+        const tile = document.createElement('button'); tile.className = 'tile mode';
+        tile.style.cssText = `position:absolute;left:0;top:${Object.keys(out).length * 500}px;width:320px;height:${height}px`;
+        const text = document.createElement('span'); text.className = 'label'; text.textContent = label; tile.appendChild(text); grid.appendChild(tile);
+        if (picture) attachPicture(tile, planPictures([{ label, type: 'mode', badge: 'ai' }])[0]);
+        if (setAside) tile.classList.add('picture-set-aside');
+        const badge = attachBadge(tile, side, 'color'); placeBadge(tile);
+        const box = tile.getBoundingClientRect(), mark = badge.getBoundingClientRect();
+        out[key] = { shown: getComputedStyle(badge).display !== 'none', width: mark.width, height: mark.height,
+          right: box.right - mark.right, top: mark.top - box.top, inside: mark.left >= box.left && mark.right <= box.right && mark.top >= box.top && mark.bottom <= box.bottom };
+      };
+      make('setAside', 'Ask a question', 160, { picture: true, setAside: true, side: 'ai' });
+      make('wordsOnly', 'Zorbly', 320, { side: 'ai' });
+      make('tall', 'Zorbly', 480, { side: 'ai' });
+      make('yes', 'Yes, I am', 320, { picture: true, setAside: true, side: 'yes' });
+      return out;
+    }, { moduleURL: `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`, vocabulary });
+    for (const [key, size] of [['setAside', 28], ['wordsOnly', 40], ['tall', 56]]) {
+      const mark = result[key];
+      assert.ok(mark.shown && mark.inside, `${key}: ${JSON.stringify(mark)}`);
+      assert.ok(Math.abs(mark.width - size) <= 1 && Math.abs(mark.height - size) <= 1, `${key}: ${size} px, got ${JSON.stringify(mark)}`);
+      assert.ok(Math.abs(mark.right - 6) <= 1 && Math.abs(mark.top - 6) <= 1, `${key}: the top-right corner: ${JSON.stringify(mark)}`);
+    }
+    assert.equal(result.yes.shown, false, 'a Yes/No badge keeps needing a picture');
     await page.close();
   } finally { await browser.close(); }
 });

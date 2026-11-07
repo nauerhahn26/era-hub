@@ -433,3 +433,58 @@ test('a stacked picture shorter than 44 px is a speck: it is set aside and the w
   assert.equal(roomy.layout, 'stacked'); assert.ok(roomy.picture >= 44, JSON.stringify(roomy));
   assert.equal((await run('Music', 480, 300)).layout, 'beside');
 });
+
+// Her pages keep their pictures (spec 2026-11-07 §7): the items of her three
+// pages fit with the stacked-big profile (the label at most 70 % of the height,
+// stepping down through 60 px to the 44 px floor), so "I love music" keeps a
+// picture of at least 30 % at 1280x800 with smaller words; a reply with the same
+// words keeps the default law.
+test('her page items fit stacked-big at 1280x800 and keep their pictures; a reply with the same words keeps the default law', { timeout: 90000 }, async t => {
+  const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-layout-'));
+  const server = serve(scratch, []); server.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive: true, force: true }); });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, hasTouch: true }), errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const about = [['I love music', 'music'], ['I go to school', 'school'], ['I like to draw', 'draw']].map(([label, symbol]) => ({ label, symbol, symbolId: id(symbol) }));
+  await page.route('**/settings', route => route.request().method() === 'GET'
+    ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ dwellMs: 1200, pauseGoes: 'home', chatAbout: about }) }) : route.continue());
+  await page.route('**/chat/api/choices', route => route.fulfill({ status: 200, contentType: 'application/json',
+    body: JSON.stringify({ kind: 'generated', choices: withSymbols([{ id: 'choice-1', label: 'I love music', say: 'I love music.', symbol: 'music' }]), timings: { totalMs: 3 } }) }));
+  await page.goto(base + '/chat/');
+  await page.waitForFunction(() => document.body.dataset.storageReady === 'true' && document.querySelectorAll('#grid img.chat-symbol').length >= 6);
+  // What the page drew, then what each profile draws on the same tile.
+  const probe = selector => page.evaluate(async selector => {
+    const { fitTile } = await import('/chat/tile-fit.js');
+    const tile = [...document.querySelectorAll(selector)].find(el => el.querySelector('.label').textContent === 'I love music');
+    const picture = tile.querySelector('.chat-symbol'), style = getComputedStyle(tile);
+    const content = tile.getBoundingClientRect().height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+    const look = () => ({ classes: ['beside', 'stacked', 'picture-set-aside'].filter(name => tile.classList.contains(name)), font: tile.style.fontSize, reduced: tile.dataset.fontReduced || null,
+      share: getComputedStyle(picture).display === 'none' ? 0 : picture.getBoundingClientRect().height / content });
+    const shown = look();
+    fitTile(tile); const law = look();
+    fitTile(tile, { profile: 'stacked-big' }); const big = look();
+    return { shown, law, big };
+  }, selector);
+  await page.locator('#grid .tile.page', { hasText: 'About me' }).click();
+  await page.waitForFunction(() => [...document.querySelectorAll('#grid .tile.item .label')].some(label => label.textContent === 'I love music')
+    && [...document.querySelectorAll('#grid .tile.item img.chat-symbol')].every(img => img.complete && img.naturalWidth > 0));
+  const item = await probe('#grid .tile.item');
+  assert.deepEqual(item.shown, item.big, `a page item fits with the stacked-big profile: ${JSON.stringify(item)}`);
+  assert.deepEqual(item.shown.classes, ['stacked'], JSON.stringify(item));
+  assert.ok(item.shown.share >= 0.30 - 0.005, `the picture keeps ${item.shown.share.toFixed(3)} of the height`);
+  assert.equal(item.shown.reduced, '1', 'the words step down instead'); assert.ok(parseFloat(item.shown.font) >= 44);
+  assert.notDeepEqual(item.law, item.big, 'the default law would draw this tile otherwise');
+  // A reply with the same words: the default law, as before.
+  await page.locator('#grid .tile.nav', { hasText: 'Back' }).click();
+  await page.locator('#partnerOpen').click();
+  await page.locator('#testing > summary').click();
+  await page.locator('#typedQuestion').fill('What do you like?');
+  await page.locator('#typedAsk').click();
+  await page.waitForFunction(() => [...document.querySelectorAll('#grid .tile.response .label')].some(label => label.textContent === 'I love music'));
+  await page.waitForTimeout(100);
+  const reply = await probe('#grid .tile.response');
+  assert.deepEqual(reply.shown, reply.law, `a reply keeps the default law: ${JSON.stringify(reply)}`);
+  assert.deepEqual(errors, []);
+});

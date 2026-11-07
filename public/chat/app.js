@@ -516,8 +516,11 @@ function paintPictures(grid, turn) {
   // One badge a tile (spec 2026-11-07 §4): a Yes/No check mark or cross outranks the AI mark.
   tiles.forEach((el, i) => { attachPicture(el, plan[i], fit); attachBadge(el, badgeOf(entries[i], plan[i]), pictureVariant); });
 }
-// A tile's words and picture by board law, then a Yes/No check-mark or cross badge on its picture (§11).
-function fit(el) { fitTile(el); placeBadge(el); }
+// A tile's words and picture by board law, then its badge: a Yes/No check mark or
+// cross on its picture (§11), or the AI mark, on the picture or in the tile's own
+// corner when the picture was set aside (spec 2026-11-07 §7). Her pages' items
+// fit with the stacked-big profile so each line keeps its picture (§7).
+function fit(el) { fitTile(el, { profile: el.classList.contains('item') ? 'stacked-big' : undefined }); placeBadge(el); }
 function fitLabels() {
   for (const el of $('grid').querySelectorAll('.tile')) fit(el);
 }

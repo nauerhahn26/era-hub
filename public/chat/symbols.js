@@ -346,21 +346,36 @@ function sparkles(document, variant) {
   return svg;
 }
 // One badge a tile (spec 2026-11-07 §4): the Yes/No check mark or cross of a
-// full answer outranks the AI mark; a tile whose picture is the check mark or
-// the cross, or that has no picture, carries no AI mark.
+// full answer outranks the AI mark and needs a picture; a tile whose picture is
+// the check mark or the cross carries no AI mark. The AI mark marks the tile,
+// not the picture (§7): a tile with no picture still carries it, in its corner,
+// unless it is one of the yes-or-no pair.
+const YES_NO = new Set(['yes', 'no']);
 export function badgeOf(entry, plan) {
-  if (!plan || !entry) return null;
-  if (entry.badge === 'yes' || entry.badge === 'no') return entry.badge;
-  return entry.badge === 'ai' && plan.word !== 'yes' && plan.word !== 'no' ? 'ai' : null;
+  if (!entry) return null;
+  if (entry.badge === 'yes' || entry.badge === 'no') return plan ? entry.badge : null;
+  if (entry.badge !== 'ai') return null;
+  if (plan) return YES_NO.has(plan.word) ? null : 'ai';
+  return YES_NO.has(entry.type) || YES_NO.has(String(entry.symbol ?? '').toLowerCase()) ? null : 'ai';
 }
 // The badge sits on the lower right corner of the picture as drawn (object-fit:
 // contain draws a square), half its side: about a quarter of the picture.
+// With no picture shown (none, or set aside for the words) a Yes/No badge hides;
+// the AI mark sits in the tile's own top-right corner over the padding, an
+// eighth of the tile's height, 28 to 56 px (spec 2026-11-07 §7).
+export const CORNER = Object.freeze({ share: 1 / 8, min: 28, max: 56, inset: 6 });
 export function placeBadge(tile) {
   const badge = tile.querySelector('.chat-badge'), picture = tile.querySelector('.chat-symbol');
   if (!badge) return;
-  if (!picture || tile.classList.contains('picture-set-aside')) { badge.style.display = 'none'; return; }
+  if (!picture || tile.classList.contains('picture-set-aside')) {
+    if (badge.dataset.side !== 'ai') { badge.style.display = 'none'; return; }
+    const size = Math.min(CORNER.max, Math.max(CORNER.min, Math.round(tile.clientHeight * CORNER.share)));
+    // Anchored to the right edge, so a tile that narrows later keeps its mark inside.
+    Object.assign(badge.style, { display: '', width: `${size}px`, height: `${size}px`, left: 'auto', right: `${CORNER.inset}px`, top: `${CORNER.inset}px` });
+    return;
+  }
   const box = tile.getBoundingClientRect(), drawn = picture.getBoundingClientRect();
   const side = Math.min(drawn.width, drawn.height), size = Math.round(side / 2);
   const left = drawn.left + (drawn.width + side) / 2 - size * 0.85 - box.left, top = drawn.top + (drawn.height + side) / 2 - size * 0.85 - box.top;
-  Object.assign(badge.style, { display: '', width: `${size}px`, height: `${size}px`, left: `${Math.round(left)}px`, top: `${Math.round(top)}px` });
+  Object.assign(badge.style, { display: '', width: `${size}px`, height: `${size}px`, left: `${Math.round(left)}px`, right: '', top: `${Math.round(top)}px` });
 }
