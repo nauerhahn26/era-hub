@@ -733,3 +733,29 @@ hidden half hour, 5 "Reload". Only 3 and 5 change code.
       percent is shown as "<n> %" like an unlisted delay; the §6 browser
       case records each play's volume (0.6 ×3, her pick at 1, 0.4 after the
       select saves).
+
+## About me in her own words + the rail, mode and AI icons (dad, 11/7) — spec 2026-11-07
+Dad 11/7: the About me lines were "a bunch of words", the rail and mode tiles
+need a question bubble and a comment bubble, and AI-made tiles a mark; he
+chose the sparkles, and "then build and publish". Preflight (11/7): the
+badge mechanism (`attachBadge`/`placeBadge`), the hub's `generated` flag
+on a batch, the hub's text pick (`chat-symbols.js pickSymbol`) and the
+phrase table all exist; `planPictures` has no concept without an id yet
+(the one new shape). Posture: implementing, tests first, each unit gated.
+- [ ] I1 pictures: phrase pins (question, comment), the drawn `comment`
+      concept with no id in every style, the pair rule, `attachBadge('ai')`
+      sparkles, yes/no outranks ai (spec §3, §4). Tests first in
+      chat-symbols / chat-pictures; the vocabulary sheet tool tolerates an
+      id-less concept; `tools/chat-vocabulary-sheet.mjs` unchanged otherwise.
+- [ ] I2 page: the mark on the mode tiles always and on every reply of a
+      `generated: true` batch; never on local sets (spec §4). chat-browser.
+- [ ] A1 hub: lists of `{label, symbol}` with strings accepted, symbol
+      validated against the table, About me capped at ten, the new generic
+      defaults (spec §2). chat-turns first.
+- [ ] A2 page + dialog: About me = stories then `chatAbout` lines with their
+      pictures, no world lines; `words = picture word` parsed in the dialog
+      (hub pick when absent, `chat` = no picture, unknown word refused), the
+      preview strip under each list box; index.html text says ten (spec §2).
+      chat-browser; the VM smoke's story round trip unchanged.
+- [ ] A3 devices: her own ten lines on the two home devices as settings (the
+      school device when awake), never in the repo.
