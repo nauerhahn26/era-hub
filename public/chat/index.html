@@ -42,13 +42,16 @@
     </section>
     <section class="partnerSection" id="pagesSection">
       <h2>Her pages</h2>
-      <p>What My questions, My comments and About me show on her screen, after her stories. One per line, up to twenty short lines. Saved on this computer when you leave the box.</p>
-      <label>My questions <textarea id="chatQuestions" rows="4" maxlength="900" placeholder="What did you do today?"></textarea></label>
+      <p>What My questions, My comments and About me show on her screen; About me shows her stories first. One per line, up to twenty short lines (About me ten, each a whole sentence she would say about herself). Each line gets a picture: write <code>words = picture word</code> to choose it (for example <code>I love music = music</code>), <code>words = none</code> for no picture, or the words alone and Chat picks one. Saved on this computer when you leave the box; the strip under each box shows her tiles.</p>
+      <label>My questions <textarea id="chatQuestions" rows="4" maxlength="1400" placeholder="What did you do today?"></textarea></label>
       <p id="chatQuestionsNote" role="status"></p>
-      <label>My comments <textarea id="chatComments" rows="4" maxlength="900" placeholder="That sounds fun!"></textarea></label>
+      <div id="chatQuestionsPreview" class="listPreview" aria-label="How her tiles look"></div>
+      <label>My comments <textarea id="chatComments" rows="4" maxlength="1400" placeholder="That sounds fun!"></textarea></label>
       <p id="chatCommentsNote" role="status"></p>
-      <label>About me <textarea id="chatAbout" rows="4" maxlength="900" placeholder="I love music."></textarea></label>
+      <div id="chatCommentsPreview" class="listPreview" aria-label="How her tiles look"></div>
+      <label>About me <textarea id="chatAbout" rows="4" maxlength="700" placeholder="I love music = music"></textarea></label>
       <p id="chatAboutNote" role="status"></p>
+      <div id="chatAboutPreview" class="listPreview" aria-label="How her tiles look"></div>
       <label>Read her options aloud after <select id="chatPrompt"><option value="0">Off</option><option value="10000">10 seconds</option><option value="12000">12 seconds</option><option value="15000">15 seconds</option><option value="20000">20 seconds</option></select></label>
       <p>When replies are on screen and she has not answered, Chat says her name and her options, lighting each one, twice. A selection stops it.</p>
       <p id="chatPromptNote" role="status"></p>

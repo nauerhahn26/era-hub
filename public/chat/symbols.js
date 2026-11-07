@@ -180,6 +180,8 @@ export async function loadVocabulary(fetcher = globalThis.fetch, url = '/chat/vo
   } catch { return setVocabulary(null); }
 }
 export function hasVocabulary() { return !!library; }
+// A picture word of the table (spec 2026-11-07 §6): what `words = picture word` may name.
+export function knowsPicture(word) { return !!library && typeof word === 'string' && library.byWord.has(word); }
 
 // One of the family's own people, from the hub's /characters/<slug>.png route only.
 const PERSON_SRC = /^\/characters\/[a-z0-9][a-z0-9-]{0,39}\.png$/;

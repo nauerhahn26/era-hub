@@ -760,13 +760,26 @@ phrase table all exist; `planPictures` has no concept without an id yet
       cleanChoices keeps it, so Back restores it; a merged Yes/No clears it.
       chat-browser 18/18 (new AI-mark case; §11 asserts no sparkle). A mode
       tile whose picture is set aside for its words shows no mark (§4).
-- [ ] A1 hub: lists of `{label, symbol}` with strings accepted, symbol
+- [x] A1 hub: lists of `{label, symbol}` with strings accepted, symbol
       validated against the table, About me capped at ten, the new generic
       defaults (spec §2). chat-turns first.
-- [ ] A2 page + dialog: About me = stories then `chatAbout` lines with their
+      Built 11/7: items are `{label, symbol, symbolId}` (§6); a string or a
+      missing `symbol` takes `chat-symbols.js pickPicture` at save (a word-index
+      pick keeps its library id, `chat` stores null); stored strings and the
+      question/comment defaults are picked at read; a stored word the table
+      lost is picked again on read, never a broken list; a pre-cap About me
+      list keeps its first ten. chat-turns 25/25, chat-test-mode-hub 1/1.
+- [x] A2 page + dialog: About me = stories then `chatAbout` lines with their
       pictures, no world lines; `words = picture word` parsed in the dialog
       (hub pick when absent, `chat` = no picture, unknown word refused), the
       preview strip under each list box; index.html text says ten (spec §2).
       chat-browser; the VM smoke's story round trip unchanged.
+      Built 11/7: `loadWorld` is gone (the API still serves `about`/`week`);
+      the POST stays 204, so the dialog reads `/settings` back and a list it
+      did not keep says "Not saved: no picture called <word>." (`knowsPicture`
+      names it); the box is rewritten `label = word`/`= none`; the strip plans
+      with `planPictures` in her picture style. chat-browser 18/18 (the her
+      pages case runs the hub's own list door on a scratch file), chat-ui
+      38/38, chat-storage-ui 2/2, chat-picture-layout 12/12.
 - [ ] A3 devices: her own ten lines on the two home devices as settings (the
       school device when awake), never in the repo.

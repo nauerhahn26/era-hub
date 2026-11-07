@@ -35,3 +35,5 @@ dialog{background:#f8faf9;color:#17272e;border:0;border-radius:20px;max-width:72
 /* Listen for <name> (spec 2026-10-28 §8): the switch left of the lock and the lit dot (no banner, §10). */
 #partnerStrip #wakeToggle[aria-pressed="true"]{background:#6ecaa8;color:#0f2e24;border-color:#6ecaa8}
 body[data-ear="on"] #statusDot{background:#6ecaa8;box-shadow:0 0 0 5px #6ecaa81c}
+/* The partner dialog's preview strip (spec 2026-11-07 §2): her tiles, small. */
+.listPreview{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 12px}.listPreview .tile{width:104px;height:96px;padding:6px;font-size:14px;line-height:1.15;flex-direction:column;gap:4px}.listPreview .tile .chat-symbol{width:44px;height:44px}

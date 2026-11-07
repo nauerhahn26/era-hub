@@ -11,6 +11,7 @@ import { chromium } from 'playwright';
 import { checkInstalledChatUI, checkRestoredChatState, waitForChatState, makeChatToneWav, assertContentFreeMetrics } from '../tests-vm/lib/chat-ui-smoke.mjs';
 
 const { createChatStore } = createRequire(import.meta.url)('../chat-store.js');
+const { chatLists, applyListsSetting } = createRequire(import.meta.url)('../chat-turns.js');
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
@@ -321,7 +322,7 @@ test('Chat stories, explicit voice and numeric timings survive a fresh browser a
   }
 });
 
-test('her pages: lists from settings, ten a page with More and Back, the lit rail tile closes, About me puts stories first, the dialog saves the lists', { timeout: 60000 }, async t => {
+test('her pages: lists from settings, ten a page with More and Back, the lit rail tile closes, About me is stories then her lines with their pictures and no world lines, the dialog saves the lists with = picture word and shows the preview strip', { timeout: 90000 }, async t => {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-pages-'));
   const server = serve(scratch); server.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -329,14 +330,29 @@ test('her pages: lists from settings, ten a page with More and Back, the lit rai
   t.after(async () => { await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive: true, force: true }); });
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
   await context.route(url => url.origin !== base, route => route.abort('blockedbyclient'));
+  // The library pictures (spec 2026-11-07 §2): the table, and a one-pixel PNG for every /symbol/<id>.
+  const vocabulary = await fs.readFile(path.join(root, 'public/chat/vocabulary.json'));
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  await context.route('**/chat/vocabulary.json', route => route.fulfill({ status: 200, contentType: 'application/json', body: vocabulary }));
+  await context.route('**/symbol/**', route => route.fulfill({ status: 200, contentType: 'image/png', body: png }));
   const page = await context.newPage(), errors = [], saved = [];
   page.on('pageerror', error => errors.push(error.message));
   const questions = Array.from({ length: 13 }, (_, i) => `Question ${i + 1}?`);
-  await page.route('**/settings', route => {
-    if (route.request().method() === 'POST') { saved.push(route.request().postDataJSON()); return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }); }
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ dwellMs: 1200, chatQuestions: questions, chatComments: ['That is cool!'], chatAbout: ['I like swings.', 7] }) });
+  // The hub's own list door (chat-turns.js) on a scratch settings file: what it refuses stays as it was.
+  const settingsDir = path.join(scratch, 'settings'); await fs.mkdir(settingsDir);
+  const settingsFile = path.join(settingsDir, 'app-settings.json');
+  await fs.writeFile(settingsFile, JSON.stringify({ chatQuestions: questions, chatComments: ['That is cool!'],
+    chatAbout: ['I like swings.', { label: 'I love music', symbol: 'music' }, { label: 'Hello there', symbol: null }] }));
+  await page.route('**/settings', async route => {
+    if (route.request().method() === 'POST') {
+      const body = route.request().postDataJSON(); saved.push(body);
+      await fs.writeFile(settingsFile, JSON.stringify(applyListsSetting(JSON.parse(await fs.readFile(settingsFile, 'utf8')), body)));
+      return route.fulfill({ status: 204 });
+    }
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ dwellMs: 1200, ...chatLists(settingsDir) }) });
   });
-  await page.route('**/chat/api/world', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ text: '', about: ['I am in first grade.'], week: ['This week: magnets.'] }) }));
+  let worldReads = 0;
+  await page.route('**/chat/api/world', route => { worldReads++; return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ text: '', about: ['I am in first grade.'], week: ['This week: magnets.'] }) }); });
   // A saved story, through the real store, before the page loads.
   await page.goto(base + '/');
   await page.evaluate(async () => {
@@ -364,7 +380,13 @@ test('her pages: lists from settings, ten a page with More and Back, the lit rai
   assert.deepEqual(await page.locator('#grid .tile.static .label').allTextContents(), ['Tell me more', 'Something else', "Hi!", "What's up?", 'How are you?', 'Come sit with me.']);
   await page.locator('#grid .tile.page[data-page="about"]').click();
   await page.waitForFunction(() => document.querySelectorAll('#grid .tile.item').length === 4);
-  assert.deepEqual(await items(), ['Our trip', 'I like swings.', 'I am in first grade.', 'This week: magnets.'], 'stories, then her lines, then the world');
+  assert.deepEqual(await items(), ['Our trip', 'I like swings.', 'I love music', 'Hello there'], 'stories, then her lines; the world\'s lines are not on the page (spec 2026-11-07 §2)');
+  const pictured = () => page.evaluate(() => [...document.querySelectorAll('#grid .tile.item')].map(el => [el.querySelector('.label').textContent, el.dataset.symbol || null, el.querySelector('.chat-symbol') ? 'picture' : 'words']));
+  await page.waitForFunction(() => document.querySelector('#grid .tile.item[data-symbol="music"]'));
+  const about = await pictured();
+  assert.deepEqual(about.slice(1), [['I like swings.', 'swing', 'picture'], ['I love music', 'music', 'picture'], ['Hello there', null, 'words']], 'each line shows its stored picture; = none shows the words alone');
+  assert.equal(await page.locator('#grid .tile.item[data-symbol="music"]').getAttribute('data-symbol-id'), '24795');
+  assert.equal(worldReads, 0, 'About me no longer reads the world');
   await page.locator('#grid .tile.nav', { hasText: 'Back' }).click();
   await page.locator('#grid .tile.page.on').waitFor({ state: 'detached' });
   await page.locator('#grid .tile.page[data-page="comments"]').click();
@@ -372,9 +394,36 @@ test('her pages: lists from settings, ten a page with More and Back, the lit rai
   // The partner dialog: one per line, twenty lines of forty characters at most.
   await page.locator('#partnerOpen').click();
   const lines = [...Array.from({ length: 24 }, (_, i) => `Comment ${i}`), 'x'.repeat(60)];
+  // The box shows every pick as `label = word` or `label = none` (spec 2026-11-07 §6).
+  assert.equal(await page.locator('#chatAbout').inputValue(), 'I like swings. = swing\nI love music = music\nHello there = none');
+  assert.equal(await page.locator('#chatComments').inputValue(), 'That is cool! = cool');
+  // The preview strip: each line as her tile shows it.
+  const preview = field => page.evaluate(id => [...document.querySelectorAll(`#${id}Preview .tile`)].map(el =>
+    [el.querySelector('.label').textContent, el.dataset.symbol || null, el.querySelector('.chat-symbol') ? 'picture' : 'words']), field);
+  assert.deepEqual(await preview('chatAbout'), [['I like swings.', 'swing', 'picture'], ['I love music', 'music', 'picture'], ['Hello there', null, 'words']]);
+  assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#chatAboutPreview .tile')].map(el => el.dataset.picture || null)), ['library', 'library', null], 'library style');
   await page.locator('#chatComments').fill(lines.join('\n')); await page.locator('#chatComments').blur();
   await page.waitForFunction(() => document.querySelector('#chatCommentsNote').textContent.startsWith('Saved 20'));
-  assert.deepEqual(saved.at(-1), { chatComments: lines.slice(0, 20) });
+  assert.deepEqual(saved.at(-1), { chatComments: lines.slice(0, 20).map(label => ({ label })) }, 'a plain line asks the hub to pick');
+  assert.equal((await page.locator('#chatComments').inputValue()).split('\n').length, 20);
+  assert.ok((await page.locator('#chatComments').inputValue()).split('\n').every(line => / = \S/.test(line)), 'the box is written back with each pick');
+  // `= word`, a plain line and `= none`; eleven About me lines keep ten.
+  const aboutLines = ['I love music = music', 'I like trains', 'Hello = None', ...Array.from({ length: 8 }, (_, i) => `Line ${i}`)];
+  await page.locator('#chatAbout').fill(aboutLines.join('\n')); await page.locator('#chatAbout').blur();
+  await page.waitForFunction(() => document.querySelector('#chatAboutNote').textContent.startsWith('Saved 10'));
+  assert.deepEqual(saved.at(-1).chatAbout.slice(0, 3), [{ label: 'I love music', symbol: 'music' }, { label: 'I like trains' }, { label: 'Hello', symbol: null }]);
+  assert.equal(saved.at(-1).chatAbout.length, 10);
+  assert.deepEqual((await page.locator('#chatAbout').inputValue()).split('\n').slice(0, 3), ['I love music = music', 'I like trains = train', 'Hello = none']);
+  await page.waitForFunction(() => document.querySelectorAll('#chatAboutPreview .tile').length === 10);
+  assert.deepEqual((await preview('chatAbout')).slice(0, 3), [['I love music', 'music', 'picture'], ['I like trains', 'train', 'picture'], ['Hello', null, 'words']], 'the strip shows the hub\'s pick');
+  // An unknown picture word: the hub refuses the list, the note names the word, nothing changes.
+  const before = await fs.readFile(settingsFile, 'utf8');
+  await page.locator('#chatAbout').fill('I love music = musik\nI like trains'); await page.locator('#chatAbout').blur();
+  await page.waitForFunction(() => /^Not saved/.test(document.querySelector('#chatAboutNote').textContent));
+  assert.equal(await page.locator('#chatAboutNote').textContent(), 'Not saved: no picture called musik.');
+  assert.equal(await fs.readFile(settingsFile, 'utf8'), before, 'the stored list is untouched');
+  await page.locator('#chatAbout').fill('I love music = music\nI like trains'); await page.locator('#chatAbout').blur();
+  await page.waitForFunction(() => document.querySelector('#chatAboutNote').textContent.startsWith('Saved 2'));
   await page.locator('#partnerDialog form button').click();
   assert.deepEqual(await items(), lines.slice(0, 10), 'the open page shows the saved list');
   assert.deepEqual(errors, []);
