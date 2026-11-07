@@ -17,6 +17,8 @@ const escape = text => String(text).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '
 export async function buildSheet({ concepts, fetchPicture }) {
   const missing = [], cells = [];
   for (const concept of concepts) {
+    // A concept drawn in-house (spec 2026-11-07 §3) has no library id: nothing to fetch.
+    if (!concept.id) { cells.push(`<figure><div class="miss">DRAWN</div><figcaption><b>${escape(concept.word)}</b> drawn</figcaption></figure>`); continue; }
     const bytes = await fetchPicture(concept.id);
     if (!bytes) missing.push({ word: concept.word, id: concept.id });
     const picture = bytes ? `<img alt="" src="data:image/png;base64,${Buffer.from(bytes).toString('base64')}">` : '<div class="miss">NO IMAGE</div>';

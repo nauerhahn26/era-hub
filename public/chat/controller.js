@@ -18,7 +18,9 @@ export function cleanChoices(list, prefix) {
       ...(x.picture && typeof x.picture.src === 'string' && /^\/characters\/[a-z0-9][a-z0-9-]{0,39}\.png$/.test(x.picture.src)
         ? { picture: Object.freeze({ src: x.picture.src, kind: 'person' }) } : {}),
       // A letter or number tile the page draws big, with no picture.
-      ...(x.glyph === true ? { glyph: true } : {}) }));
+      ...(x.glyph === true ? { glyph: true } : {}),
+      // The AI mark (spec 2026-11-07 §4): set by the page on a batch the hub reports generated.
+      ...(x.badge === 'ai' ? { badge: 'ai' } : {}) }));
 }
 
 // Position stability (design §4.5, plan decision 10): a label still in the

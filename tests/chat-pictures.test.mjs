@@ -36,6 +36,9 @@ test('the strict choice schema requires a symbol drawn only from the vocabulary 
   assert.deepEqual([...symbols].sort(), [...pictures.symbolWords()].sort());
   assert.ok(symbols.length <= 500 && symbols.join('').length < 15000, 'inside the structured-output enum limits');
   assert.ok(symbols.every(word => byWord.has(word)), 'no enum value outside the table');
+  // A concept drawn in-house (spec 2026-11-07 §3) has no library picture: the model never picks it.
+  assert.ok(!symbols.includes('comment'), 'the id-less comment drawing is not the model\'s to pick');
+  assert.ok(symbols.every(word => word === 'chat' || byWord.get(word).id > 0));
   for (const unknown of ['spaceship', 'Pizza', 'unicorn rainbow', '', 'happy face']) assert.ok(!symbols.includes(unknown), unknown);
   assert.match(instructions, /symbol/i);
   assert.match(instructions, /never .*affirmative picture.*(refusal|negation)/i);
@@ -144,6 +147,7 @@ test('the warm list is every vocabulary picture once, alternates included', () =
   const ids = pictures.vocabularyIds();
   assert.equal(new Set(ids).size, ids.length);
   for (const concept of vocabulary.concepts) {
+    if (concept.id === undefined) { assert.equal(concept.word, 'comment', 'only the drawn concept lacks an id'); continue; }
     assert.ok(ids.includes(String(concept.id)), concept.word);
     if (concept.altId) assert.ok(ids.includes(String(concept.altId)), concept.word + ' alternate');
   }
@@ -213,6 +217,11 @@ test('the vocabulary contact sheet shows every word with its picture and lists i
   assert.match(sheet.html, /data:image\/png;base64,/);
   assert.ok(!/https?:\/\//.test(sheet.html), 'the sheet is self-contained');
   assert.match(sheet.html, /NO IMAGE/);
+  // A concept drawn in-house (spec 2026-11-07 §3) has no id: never fetched, never "missing", shown as drawn.
+  const drawn = [];
+  const tolerant = await buildSheet({ concepts: [{ word: 'pizza', id: 2527 }, { word: 'comment' }], fetchPicture: async id => { drawn.push(id); return Buffer.from('png-bytes'); } });
+  assert.deepEqual(drawn, [2527]); assert.deepEqual(tolerant.missing, []);
+  assert.match(tolerant.html, /<b>comment<\/b> drawn/); assert.ok(!/undefined/.test(tolerant.html));
 });
 
 test('without public/chat/vocabulary.json the module loads, warns once and falls back to the bubble with no picture id', async t => {

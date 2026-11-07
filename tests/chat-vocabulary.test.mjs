@@ -8,11 +8,15 @@ const vocabulary = JSON.parse(fs.readFileSync(new URL('../public/chat/vocabulary
 const concepts = vocabulary.concepts;
 const words = new Map(concepts.map(concept => [concept.word, concept]));
 
+// Concepts whose picture is drawn in-house in every style (spec 2026-11-07 §3): no library id.
+const DRAWN_ONLY = ['comment'];
+
 test('the table holds 300 to 600 concepts, each one lowercase word with one approved numeric pictogram id', () => {
   assert.ok(concepts.length >= 300 && concepts.length <= 600, `${concepts.length} concepts`);
   for (const concept of concepts) {
     assert.deepEqual(Object.keys(concept).filter(key => !['word', 'id', 'alt', 'altId', 'tone'].includes(key)), [], concept.word);
     assert.match(concept.word, /^[a-z][a-z' ]{0,23}$/, concept.word);
+    if (DRAWN_ONLY.includes(concept.word)) { assert.deepEqual(Object.keys(concept), ['word'], 'a drawn concept has no id, alternate or tone'); continue; }
     assert.ok(Number.isSafeInteger(concept.id) && concept.id > 0, concept.word);
     if (concept.altId !== undefined) assert.ok(Number.isSafeInteger(concept.altId) && concept.altId !== concept.id, concept.word);
     if (concept.alt !== undefined) assert.ok(Array.isArray(concept.alt) && concept.alt.every(alt => /^[a-z][a-z' -]{0,30}$/.test(alt)), concept.word);
@@ -23,8 +27,18 @@ test('the table holds 300 to 600 concepts, each one lowercase word with one appr
 test('words, alternative words and pictogram ids are unique across the table', () => {
   const spoken = concepts.flatMap(concept => [concept.word, ...(concept.alt || [])]);
   assert.equal(new Set(spoken).size, spoken.length, spoken.filter((word, i) => spoken.indexOf(word) !== i).join(', '));
-  const ids = concepts.map(concept => concept.id);
+  const ids = concepts.filter(concept => concept.id !== undefined).map(concept => concept.id);
   assert.equal(new Set(ids).size, ids.length, 'one picture means one concept');
+  assert.deepEqual(concepts.filter(concept => concept.id === undefined).map(concept => concept.word), DRAWN_ONLY, 'only the drawn concepts lack an id');
+});
+
+test('the rail and the mode tiles: a question bubble and a comment bubble (spec 2026-11-07 §3)', () => {
+  assert.equal(vocabulary.phrases['my questions'], 'question');
+  assert.equal(vocabulary.phrases['ask a question'], 'question');
+  assert.equal(vocabulary.phrases['my comments'], 'comment');
+  assert.equal(vocabulary.phrases['make a comment'], 'comment');
+  assert.equal(vocabulary.phrases['about me'], 'me');
+  assert.deepEqual(words.get('comment'), { word: 'comment' });
 });
 
 test('the core conversation, feeling, family-role, day and weather words are present', () => {

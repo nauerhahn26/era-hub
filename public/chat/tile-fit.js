@@ -8,9 +8,11 @@
 // is set aside and the words keep the whole tile. A stacked picture that would
 // render under 44 px tall (a speck) is set aside the same way.
 // Stacked labels may take 55% of the height, then 80% (board-render.js applyFit tiers).
-// The "stacked-big" profile is a preview candidate for the maintainer, not the
-// default: a stacked picture keeps at least 30% of the height and the label
-// steps down toward 60 px before the 44 px floor.
+// The "stacked-big" profile (spec 2026-11-07 §7) is how the items of her own
+// pages fit (app.js fit(), `.tile.item` only; replies, the rail, the corners and
+// the bottom row keep the default law): a stacked picture keeps at least 30% of
+// the height and the label steps down from 74 through 60 px to the 44 px floor
+// before the picture is set aside.
 export const STACKED_BIG = Object.freeze({ labelShare: 0.70 });
 // A one- or two-character label with no picture (a letter or number reply) is
 // a GLYPH: the largest 2 px step from 3x the target that keeps it within 85%
@@ -81,8 +83,11 @@ export function fitTile(tile, { profile } = {}) {
   // than none (coordinator review 10/28, 1920x1080): it is set aside below.
   let size = null;
   if (profile === 'stacked-big') {
-    // The label never takes more than 70%: sizes step down through 60 px to the floor.
-    size = shrink(tile, label, 'stacked', start, FIT.floor, STACKED_BIG.labelShare);
+    // The label and the gap above it never take more than 70%, so the picture keeps
+    // at least 30%: sizes step down from the target through 60 px to the floor.
+    const style = getComputedStyle(tile), content = tile.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+    const gap = parseFloat(style.rowGap) || 0;
+    size = shrink(tile, label, 'stacked', start, FIT.floor, Math.max(0, STACKED_BIG.labelShare - (content > 0 ? gap / content : 0)));
   } else {
     // Every height share at the 74 px target first; only the last share shrinks below it.
     for (const share of FIT.stackedShares) {

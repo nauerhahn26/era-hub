@@ -50,7 +50,15 @@ const shapes = {
   happy: face('M18 37q14 18 28 0'),
   sad: face('M18 46q14-18 28 0'),
   tired: [path('M44 7a25 25 0 1 0 13 34C31 49 20 20 44 7z'), path('M43 18h12L43 30h12')],
+  // The comment bubble (spec 2026-11-07 §3): the library's own style in fixed colours,
+  // a black outline round a white bubble with two text lines, like its question bubble.
+  comment: [['path', { d: 'M12 9h40a6 6 0 0 1 6 6v22a6 6 0 0 1-6 6H30L17 55V43h-5a6 6 0 0 1-6-6V15a6 6 0 0 1 6-6z', fill: '#fff', stroke: '#000' }],
+    ['path', { d: 'M17 22h30', stroke: '#000' }], ['path', { d: 'M17 32h20', stroke: '#000' }]],
 };
+// The AI mark (spec 2026-11-07 §4): three four-pointed sparkles, one colour.
+const sparkle = (cx, cy, r) => { const k = r * 0.2;
+  return `M${cx} ${cy - r}Q${cx + k} ${cy - k} ${cx + r} ${cy}Q${cx + k} ${cy + k} ${cx} ${cy + r}Q${cx - k} ${cy + k} ${cx - r} ${cy}Q${cx - k} ${cy - k} ${cx} ${cy - r}Z`; };
+const SPARKLES = [sparkle(26, 36, 20), sparkle(47, 15, 11), sparkle(49, 47, 8)];
 
 function normal(value) {
   if (typeof value !== 'string' || value.length > 800 || /[<>\x00-\x1f]/.test(value)) return '';
@@ -158,7 +166,8 @@ const FROM_DRAWN = { reactions: 'wow', repair: 'help', laugh: 'funny', unfair: '
 export function setVocabulary(table) {
   if (!table || !Array.isArray(table.concepts) || !table.concepts.length || !table.phrases) { library = null; return false; }
   const byWord = new Map(table.concepts.map(concept => [concept.word, concept]));
-  const byId = new Map(table.concepts.map(concept => [concept.id, concept]));
+  // A concept drawn in-house (spec 2026-11-07 §3, "comment") has no library id.
+  const byId = new Map(table.concepts.filter(concept => concept.id).map(concept => [concept.id, concept]));
   const forms = new Map();
   for (const concept of table.concepts) for (const form of [concept.word, ...(concept.alt || [])]) forms.set(normal(form), concept.word);
   library = { byWord, byId, forms, phrases: new Map(Object.entries(table.phrases)), fallback: byWord.get(table.fallback || 'chat') };
@@ -171,6 +180,8 @@ export async function loadVocabulary(fetcher = globalThis.fetch, url = '/chat/vo
   } catch { return setVocabulary(null); }
 }
 export function hasVocabulary() { return !!library; }
+// A picture word of the table (spec 2026-11-07 §6): what `words = picture word` may name.
+export function knowsPicture(word) { return !!library && typeof word === 'string' && library.byWord.has(word); }
 
 // One of the family's own people, from the hub's /characters/<slug>.png route only.
 const PERSON_SRC = /^\/characters\/[a-z0-9][a-z0-9-]{0,39}\.png$/;
@@ -213,19 +224,34 @@ export function planPictures(entries, { variant = 'color', keep = [] } = {}) {
   if (!library) return entries.map(() => null);
   const rank = entry => entry.type === 'yes' || entry.type === 'no' ? 0 : entry.type === 'route' ? 1 : entry.type === 'response' ? 3 : 2;
   const order = entries.map((entry, index) => index).sort((a, b) => rank(entries[a]) - rank(entries[b]) || a - b);
-  const used = new Set(), shown = new Set(), plan = entries.map(() => null);
+  const used = new Set(), owners = new Map(), plan = entries.map(() => null);
   const kept = index => keep[index] !== undefined;
-  const lookOf = item => item.kind === 'emoji' ? item.emoji : item.kind === 'drawn' ? 'drawn:' + item.drawn : item.id;
-  entries.forEach((entry, index) => { if (!kept(index)) return; plan[index] = keep[index]; if (keep[index]) { used.add(keep[index].id); shown.add(lookOf(keep[index])); } });
+  const lookOf = item => item.kind === 'person' ? item.src : item.kind === 'emoji' ? item.emoji : item.kind === 'drawn' ? 'drawn:' + item.drawn : item.id;
+  const show = (item, index) => { if (item.id) used.add(item.id); const look = lookOf(item); owners.set(look, [...(owners.get(look) || []), index]); };
+  // The pair rule (spec 2026-11-07 §3): two tiles may show one picture when exactly
+  // one of them carries a badge (My questions and the AI-marked Ask a question), as
+  // Yes and No pair; never three, never two unbadged or two badged, and never a
+  // reply, so a generated reply still never repeats a rail picture.
+  const reply = index => entries[index].type === 'response' || entries[index].type === 'made';
+  const mayShare = (item, index) => { const by = owners.get(lookOf(item));
+    return !!by && by.length === 1 && !reply(index) && !reply(by[0]) && !!entries[index].badge !== !!entries[by[0]].badge; };
+  // A concept without an id (spec 2026-11-07 §3) is a drawing in every style.
+  const make = (id, word) => {
+    if (!id) return { word, id: null, kind: 'drawn', src: null, emoji: null, drawn: drawnFor(word) };
+    const emoji = emojiFor(word);
+    const kind = variant === 'emoji' ? (emoji ? 'emoji' : 'drawn') : 'library';
+    return { word, id, kind, src: kind === 'library' ? sourceFor(id, variant) : kind === 'emoji' ? emoji : null, emoji, drawn: drawnFor(word) };
+  };
+  entries.forEach((entry, index) => { if (!kept(index)) return; plan[index] = keep[index]; if (keep[index]) show(keep[index], index); });
   for (const index of order) {
     if (kept(index)) continue;
     const concept = conceptFor(entries[index]);
     if (!concept) continue;
     // A person's own picture: shown once a page, in every style; on error the bubble.
     if (concept.person) {
-      if (shown.has(concept.src)) continue;
-      shown.add(concept.src);
+      if (owners.has(concept.src)) continue;
       plan[index] = { word: concept.word, id: null, kind: 'person', src: concept.src, emoji: null, drawn: 'chat' };
+      show(plan[index], index);
       continue;
     }
     // Yes and No are her boards' pair (spec 2026-10-28 §11): the green check mark
@@ -233,16 +259,18 @@ export function planPictures(entries, { variant = 'color', keep = [] } = {}) {
     // No answered in full shows the feeling on both replies, each with its check-mark or cross badge.
     const pair = ((concept.word === 'yes' || concept.word === 'no') && concept === library.byWord.get(concept.word)) ||
       entries[index].badge === 'yes' || entries[index].badge === 'no';
-    const options = [[concept.id, concept.word], [concept.altId, concept.word], [library.fallback.id, library.fallback.word]];
-    const [id, word] = pair ? [concept.id, concept.word] : options.find(([candidate]) => candidate && !used.has(candidate)) || [];
-    if (!id) continue;
-    const emoji = emojiFor(word);
-    const kind = variant === 'emoji' ? (emoji ? 'emoji' : 'drawn') : 'library';
-    // The emoji style shows stickers and drawings, which repeat across concepts.
-    const look = kind === 'emoji' ? emoji : kind === 'drawn' ? 'drawn:' + drawnFor(word) : id;
-    if (shown.has(look) && !pair) continue;
-    used.add(id); shown.add(look);
-    plan[index] = { word, id, kind, src: kind === 'library' ? sourceFor(id, variant) : kind === 'emoji' ? emoji : null, emoji, drawn: drawnFor(word) };
+    let item = make(concept.id || null, concept.word);
+    if (!pair && !(owners.has(lookOf(item)) && mayShare(item, index))) {
+      const options = concept.id ? [[concept.id, concept.word], [concept.altId, concept.word]] : [[null, concept.word]];
+      const found = [...options, [library.fallback.id, library.fallback.word]]
+        .find(([id, word], i) => id ? !used.has(id) : i === 0 && !owners.has('drawn:' + drawnFor(word)));
+      if (!found) continue;
+      item = make(...found);
+      // The emoji style shows stickers and drawings, which repeat across concepts.
+      if (owners.has(lookOf(item))) continue;
+    }
+    show(item, index);
+    plan[index] = item;
   }
   return plan;
 }
@@ -287,6 +315,7 @@ export function attachPicture(tile, plan, onChange) {
 // small badge on the feeling's picture, "merged when it can be". `side` null removes it.
 export function attachBadge(tile, side, variant = 'color') {
   tile.querySelector('.chat-badge')?.remove();
+  if (side === 'ai') return tile.appendChild(sparkles(tile.ownerDocument, variant));
   if (side !== 'yes' && side !== 'no' || !library) return null;
   const document = tile.ownerDocument, concept = library.byWord.get(side);
   const drawn = () => { const svg = drawnPicture(side, document); svg.setAttribute('class', 'chat-badge'); svg.dataset.side = side; return svg; };
@@ -302,14 +331,51 @@ export function attachBadge(tile, side, variant = 'color') {
   tile.appendChild(badge);
   return badge;
 }
+// The AI mark (spec 2026-11-07 §4): drawn in-house, violet on the white badge
+// disc, black in the black-and-white style; the same in every picture style.
+function sparkles(document, variant) {
+  const svg = document.createElementNS(NS, 'svg');
+  for (const [key, value] of Object.entries({ class: 'chat-badge', viewBox: '0 0 64 64', 'aria-hidden': 'true', focusable: 'false' })) svg.setAttribute(key, value);
+  const colour = variant === 'bw' ? '#000' : '#8a5cf6';
+  for (const d of SPARKLES) {
+    const element = document.createElementNS(NS, 'path');
+    element.setAttribute('d', d); element.setAttribute('fill', colour); element.setAttribute('stroke', 'none');
+    svg.appendChild(element);
+  }
+  svg.dataset.side = 'ai';
+  return svg;
+}
+// One badge a tile (spec 2026-11-07 §4): the Yes/No check mark or cross of a
+// full answer outranks the AI mark and needs a picture; a tile whose picture is
+// the check mark or the cross carries no AI mark. The AI mark marks the tile,
+// not the picture (§7): a tile with no picture still carries it, in its corner,
+// unless it is one of the yes-or-no pair.
+const YES_NO = new Set(['yes', 'no']);
+export function badgeOf(entry, plan) {
+  if (!entry) return null;
+  if (entry.badge === 'yes' || entry.badge === 'no') return plan ? entry.badge : null;
+  if (entry.badge !== 'ai') return null;
+  if (plan) return YES_NO.has(plan.word) ? null : 'ai';
+  return YES_NO.has(entry.type) || YES_NO.has(String(entry.symbol ?? '').toLowerCase()) ? null : 'ai';
+}
 // The badge sits on the lower right corner of the picture as drawn (object-fit:
 // contain draws a square), half its side: about a quarter of the picture.
+// With no picture shown (none, or set aside for the words) a Yes/No badge hides;
+// the AI mark sits in the tile's own top-right corner over the padding, an
+// eighth of the tile's height, 28 to 56 px (spec 2026-11-07 §7).
+export const CORNER = Object.freeze({ share: 1 / 8, min: 28, max: 56, inset: 6 });
 export function placeBadge(tile) {
   const badge = tile.querySelector('.chat-badge'), picture = tile.querySelector('.chat-symbol');
   if (!badge) return;
-  if (!picture || tile.classList.contains('picture-set-aside')) { badge.style.display = 'none'; return; }
+  if (!picture || tile.classList.contains('picture-set-aside')) {
+    if (badge.dataset.side !== 'ai') { badge.style.display = 'none'; return; }
+    const size = Math.min(CORNER.max, Math.max(CORNER.min, Math.round(tile.clientHeight * CORNER.share)));
+    // Anchored to the right edge, so a tile that narrows later keeps its mark inside.
+    Object.assign(badge.style, { display: '', width: `${size}px`, height: `${size}px`, left: 'auto', right: `${CORNER.inset}px`, top: `${CORNER.inset}px` });
+    return;
+  }
   const box = tile.getBoundingClientRect(), drawn = picture.getBoundingClientRect();
   const side = Math.min(drawn.width, drawn.height), size = Math.round(side / 2);
   const left = drawn.left + (drawn.width + side) / 2 - size * 0.85 - box.left, top = drawn.top + (drawn.height + side) / 2 - size * 0.85 - box.top;
-  Object.assign(badge.style, { display: '', width: `${size}px`, height: `${size}px`, left: `${Math.round(left)}px`, top: `${Math.round(top)}px` });
+  Object.assign(badge.style, { display: '', width: `${size}px`, height: `${size}px`, left: `${Math.round(left)}px`, right: '', top: `${Math.round(top)}px` });
 }

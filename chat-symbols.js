@@ -119,7 +119,9 @@ const REFUSAL = /^(?:no|nope|nah)$|^no\s+(?!(?:i|im|we|you|it|its|thats|that|way
 const DISLIKE = /\b(?:dont|do not|didnt|doesnt|wouldnt)\s+like\b|\b(?:hate|hates|dislike|dislikes)\b/;
 
 function symbolWords() {
-  const words = vocabulary().concepts.slice(0, ENUM_CAP).map(concept => concept.word);
+  // A concept drawn in-house (spec 2026-11-07 §3, "comment") has no library id:
+  // it is the page's picture for its own tiles, never the model's pick.
+  const words = vocabulary().concepts.filter(concept => conceptId(concept.word)).slice(0, ENUM_CAP).map(concept => concept.word);
   return words.includes(FALLBACK) ? words : [...words, FALLBACK];
 }
 // A concept's picture id in the vocabulary table, or null (yes/no in full, spec 2026-10-28 §11).
@@ -495,6 +497,21 @@ function choose({ label = '', say = '', symbol, picture } = {}, people = current
   return { word: negationGuard(l, s, FALLBACK) };
 }
 function pickSymbol(choice = {}) { return choose(choice).word; }
+// A line of her own pages (spec 2026-11-07 §2/§6/§8): the hub's pick for its
+// words, as `{ symbol, symbolId }`, kept only when it is a table word (the
+// table's id, null for a drawn concept): only the table is pre-warmed, so an
+// off-table word-index pick, the bubble (`chat`) or no pick is no picture.
+function pickPicture(label) {
+  const pick = choose({ label, say: label });
+  if (!pick || pick.word === FALLBACK || typeof pick.word !== 'string' || !vocabulary().byWord.has(pick.word)) return { symbol: null, symbolId: null };
+  return { symbol: pick.word, symbolId: conceptId(pick.word) };
+}
+// A picture word a partner typed or stored (§8): a table word with the table's
+// id (null for a drawn concept); a word off the table, with or without an id, is null.
+function tablePicture(symbol) {
+  if (typeof symbol !== 'string' || !symbol || symbol.length > 64 || /[\x00-\x1f<>]/.test(symbol)) return null;
+  return vocabulary().byWord.has(symbol) ? { symbol, symbolId: conceptId(symbol) } : null;
+}
 // True when the model named a picture the hub refused for the label's own
 // (test mode counts these; the words are never changed).
 function symbolRejected({ label = '', say = '', symbol } = {}) {
@@ -634,5 +651,5 @@ function createSymbolWarmer({ ids, isCached, fetchOne, delayMs = 250, maxFailure
   };
 }
 
-module.exports = { symbolWords, conceptId, pickSymbol, symbolRejected, withSymbols, vocabularyIds, createSymbolWarmer, normal,
+module.exports = { symbolWords, conceptId, pickSymbol, pickPicture, tablePicture, symbolRejected, withSymbols, vocabularyIds, createSymbolWarmer, normal,
   setLexicon, setPeople, pictureCandidates, createPictureWarmer };

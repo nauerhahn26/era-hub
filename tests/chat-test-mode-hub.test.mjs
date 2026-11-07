@@ -89,12 +89,18 @@ test('the hub keeps test mode off by default, moves it only by a real boolean fr
   assert.deepEqual(await likes(), [], 'an empty list is a real choice');
 
   // Her lists (stable frame §2): generic defaults, saved per key, same door.
-  const lists = async () => { const all = await (await fetch(base + '/settings')).json(); return { q: all.chatQuestions, c: all.chatComments, a: all.chatAbout }; };
+  const lists = async () => { const all = await (await fetch(base + '/settings')).json(); const labels = list => list.map(item => item.label); return { q: labels(all.chatQuestions), c: labels(all.chatComments), a: labels(all.chatAbout) }; };
   const setLists = (body, headers = {}) => fetch(base + '/settings', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
   const before = await lists();
   assert.equal(before.q.length, 10); assert.equal(before.q[0], 'How are you?');
   assert.equal(before.c.length, 10); assert.equal(before.c[0], "That's cool!");
-  assert.deepEqual(before.a, ['I talk with my eyes', 'I love books', 'I like to draw', 'Ask me anything']);
+  assert.deepEqual(before.a, ['I talk with my eyes', 'I go to school', 'I love music', 'I love books', 'I like to draw', 'I like movies', 'I like to be silly', 'Ask me anything']);
+  const objects = async () => (await (await fetch(base + '/settings')).json()).chatAbout;
+  assert.deepEqual((await objects())[0], { label: 'I talk with my eyes', symbol: 'eyes', symbolId: 6573 }, 'GET /settings serves the object form (spec 2026-11-07 §2)');
+  assert.equal((await setLists({ chatAbout: [{ label: 'I love music', symbol: 'no-such-picture' }] })).status, 204);
+  assert.equal((await objects()).length, 8, 'an unknown picture word leaves the list alone');
+  assert.equal((await setLists({ chatAbout: [{ label: 'I love music', symbol: 'music' }, { label: 'Hello', symbol: null }] })).status, 204);
+  assert.deepEqual(await objects(), [{ label: 'I love music', symbol: 'music', symbolId: 24795 }, { label: 'Hello', symbol: null, symbolId: null }]);
   assert.equal((await setLists({ chatQuestions: [' Why? ', 'why?'], chatAbout: ['I have a cat'] })).status, 204);
   assert.deepEqual(await lists(), { q: ['Why?'], c: before.c, a: ['I have a cat'] });
   assert.equal((await setLists({ chatComments: ['x'.repeat(41)], chatAbout: ['ok'] })).status, 204);

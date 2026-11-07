@@ -3,7 +3,7 @@ import { createMicrophone } from './capture.js';
 import { createChatVoice } from './voice.js';
 import { createTurnMetrics } from './metrics.js';
 import { createChatStorage } from './storage.js';
-import { attachSymbol, resolveSymbol, loadVocabulary, hasVocabulary, planPictures, attachPicture, attachBadge, placeBadge } from './symbols.js';
+import { attachSymbol, resolveSymbol, loadVocabulary, hasVocabulary, knowsPicture, planPictures, attachPicture, attachBadge, placeBadge, badgeOf } from './symbols.js';
 import { fitTile } from './tile-fit.js';
 import { GRID, fixedTiles, replyAreas, pageCells, paginate, BAR_BACK, backTarget, createBackStack } from './frame.js';
 import { createOptionsReader } from './prompt.js';
@@ -201,17 +201,57 @@ let readingClip = ''; // the reading's whole text while it is read (its clip at 
 // reading's percent of her voice, 40-100, default 60 (it speaks to her alone).
 let promptMs = 0, herName = '', readVolume = 60;
 const promptPrefix = () => (herName ? `${herName}, your options are` : 'Your options are');
-const lists = { questions: [], comments: [], about: [] }, world = { about: [], week: [] };
+const lists = { questions: [], comments: [], about: [] };
 let listsVersion = 0;
 const LIST_FIELDS = [['questions', 'chatQuestions'], ['comments', 'chatComments'], ['about', 'chatAbout']];
-// One partner list from /settings: strings only; missing is empty (the hub adds the fields).
+// Lines a page keeps (spec 2026-11-07 §2): About me ten, the others twenty.
+const LIST_MAX = { questions: 20, comments: 20, about: 10 };
+// One item of a list from /settings (spec 2026-11-07 §2/§6): `{ label, symbol,
+// symbolId }`, `symbol` null for no picture. A plain string (an older hub) is
+// its label with the picture guessed as before (`symbol` undefined).
+function listItem(item) {
+  if (typeof item === 'string') return item.trim() ? { label: item.trim(), symbol: undefined, symbolId: undefined } : null;
+  if (!item || typeof item.label !== 'string' || !item.label.trim()) return null;
+  const symbol = typeof item.symbol === 'string' && item.symbol ? item.symbol : null;
+  return { label: item.label.trim(), symbol, symbolId: symbol && Number.isSafeInteger(item.symbolId) && item.symbolId > 0 ? item.symbolId : null };
+}
+// The box shows every pick (§6): `label = word`, `label = none`, or the label alone when the hub sent no pick.
+const boxLine = item => item.symbol === undefined ? item.label : `${item.label} = ${item.symbol === null ? 'none' : item.symbol}`;
+// One partner list from /settings; missing is empty (the hub adds the fields).
 function setList(key, value) {
-  lists[key] = Array.isArray(value) ? value.filter(item => typeof item === 'string' && item.trim()).map(item => item.trim()) : [];
-  const box = $(LIST_FIELDS.find(([name]) => name === key)[1]);
-  if (box) box.value = lists[key].join('\n');
+  lists[key] = Array.isArray(value) ? value.map(listItem).filter(Boolean) : [];
+  const field = LIST_FIELDS.find(([name]) => name === key)[1];
+  const box = $(field);
+  if (box) box.value = lists[key].map(boxLine).join('\n');
+  paintPreview(field, lists[key]);
   // Only an open page shows the lists: the frame itself never redraws for them.
   listsVersion++;
   if (appReady && page) renderGrid(controller.state);
+}
+// The preview strip under a list box (spec 2026-11-07 §2): each line as her tile
+// shows it, words and picture, planned the way her page plans them.
+function paintPreview(field, items) {
+  const strip = $(`${field}Preview`);
+  if (!strip) return;
+  const tiles = items.map(item => {
+    const el = document.createElement('div'); el.className = 'tile item';
+    const text = document.createElement('span'); text.className = 'label'; text.textContent = item.label;
+    el.appendChild(text); return el;
+  });
+  strip.replaceChildren(...tiles);
+  if (!hasVocabulary()) return;
+  const plan = planPictures(items.map(item => item.symbol === null ? { type: 'rest' } : { label: item.label, type: 'item', say: item.label, symbol: item.symbol, symbolId: item.symbolId }),
+    { variant: pictureVariant });
+  tiles.forEach((el, i) => attachPicture(el, plan[i]));
+}
+// One partner line (§6): `words`, `words = picture word` or `words = none`.
+// No `=` asks the hub to pick (symbol left out); `none` is no picture (null).
+function parseLine(line) {
+  const at = line.lastIndexOf('=');
+  if (at < 0) return { label: line.trim().slice(0, 40) };
+  const label = line.slice(0, at).trim().slice(0, 40), word = line.slice(at + 1).trim().toLowerCase();
+  if (!word) return { label };
+  return { label, symbol: word === 'none' ? null : word };
 }
 
 // Two voices (spec 2026-10-31 §3.3): what she says is "her"; the options
@@ -297,6 +337,16 @@ async function control(type, extra = {}) {
 }
 function diagnostic(text) { diagnosticLine = text; paintDiagnostics(); }
 
+// The AI mark (spec 2026-11-07 §4): every reply of a batch the hub reports as
+// `generated: true` carries it; a batch the hub built without the model (the
+// yes-or-no pair, a "this or that" split, letters and numbers, the guarded
+// templates, the fallback sets) carries none.
+function marked(result) {
+  const choices = result?.choices;
+  if (!Array.isArray(choices)) return choices;
+  const generated = result.generated === true;
+  return choices.map(choice => choice && typeof choice === 'object' ? { ...choice, badge: generated ? 'ai' : undefined } : choice);
+}
 const controller = createChatController({
   onTiming: timingEvent,
   requestChoices: async ({ text, signal }) => {
@@ -311,7 +361,7 @@ const controller = createChatController({
     metrics.observe(timing, { choicesServerMs: result.timings?.totalMs });
     stagedMeta = { handle: timing, kind: result.kind, usage: result.usage, symbolRejected: result.symbolRejected, pictureWarm: result.pictureWarm,
       shape: result.shape, recallRejected: result.recallRejected, world: result.world };
-    return result;
+    return { ...result, choices: marked(result) };
   },
   // A failed reply fails the turn only (spec 2026-10-28 §14): the session, the
   // audio socket, the microphone, the ear and a press window stay; the hub's
@@ -463,10 +513,14 @@ function paintPictures(grid, turn) {
   const byLabel = new Map();
   entries.forEach((entry, i) => { const key = replyKey(entry); if (key !== null) byLabel.set(key, plan[i]); });
   if (byLabel.size || turn !== paintedReplies.turn) paintedReplies = { turn, byLabel };
-  tiles.forEach((el, i) => { attachPicture(el, plan[i], fit); attachBadge(el, plan[i] ? entries[i].badge : null, pictureVariant); });
+  // One badge a tile (spec 2026-11-07 §4): a Yes/No check mark or cross outranks the AI mark.
+  tiles.forEach((el, i) => { attachPicture(el, plan[i], fit); attachBadge(el, badgeOf(entries[i], plan[i]), pictureVariant); });
 }
-// A tile's words and picture by board law, then a Yes/No check-mark or cross badge on its picture (§11).
-function fit(el) { fitTile(el); placeBadge(el); }
+// A tile's words and picture by board law, then its badge: a Yes/No check mark or
+// cross on its picture (§11), or the AI mark, on the picture or in the tile's own
+// corner when the picture was set aside (spec 2026-11-07 §7). Her pages' items
+// fit with the stacked-big profile so each line keeps its picture (§7).
+function fit(el) { fitTile(el, { profile: el.classList.contains('item') ? 'stacked-big' : undefined }); placeBadge(el); }
 function fitLabels() {
   for (const el of $('grid').querySelectorAll('.tile')) fit(el);
 }
@@ -474,30 +528,21 @@ const capturing = state => state.phase === 'Capturing question';
 const waitingForReplies = state => ['Capturing question', 'Preparing'].includes(state.phase);
 
 // ---- pages (spec 2026-10-28 §2) ----
+// A line of her own carries its stored picture (spec 2026-11-07 §2); `none` shows the words alone.
+const lineItem = item => ({ label: item.label, say: item.label, symbol: item.symbol ?? undefined, symbolId: item.symbolId ?? undefined, noPicture: item.symbol === null });
+// About me is her saved stories, then her own lines; the world's notes feed the replies, never this page.
 function pageItems(key) {
-  if (key === 'about') return [...stories.map(story => ({ label: story.label, say: story.say })),
-    ...[...lists.about, ...world.about, ...world.week].map(line => ({ label: line, say: line }))];
-  return (lists[key] || []).map(line => ({ label: line, say: line }));
+  if (key === 'about') return [...stories.map(story => ({ label: story.label, say: story.say })), ...lists.about.map(lineItem)];
+  return (lists[key] || []).map(lineItem);
 }
 function openPage(key) {
   reader.cancel();
   if (page === key) { closePage(); return; }
   page = key; pageOffset = 0; modeView = null;
   turnLog.content(questionMetric, { page: key });
-  if (key === 'about') void loadWorld();
   gridKey = ''; renderGrid(controller.state);
 }
 function closePage() { page = null; pageOffset = 0; gridKey = ''; renderGrid(controller.state); }
-async function loadWorld() {
-  try {
-    const value = await json(`${API}/world`);
-    const lines = list => (Array.isArray(list) ? list.filter(line => typeof line === 'string' && line.trim()).map(line => line.trim()) : []);
-    const next = { about: lines(value.about), week: lines(value.week) };
-    if (JSON.stringify(next) === JSON.stringify(world)) return;
-    Object.assign(world, next); listsVersion++;
-    if (page === 'about') { gridKey = ''; renderGrid(controller.state); }
-  } catch { /* the saved stories and lists still show */ }
-}
 
 // ---- modes and Something else (spec 2026-10-28 §3) ----
 // Both made sets are asked for once a batch is revealed, never before it.
@@ -518,7 +563,7 @@ function requestMade(state) {
   function ask(kind, abort) {
     json(`${API}/choices`, { method: 'POST', body: JSON.stringify({ text, context, mode: kind }), signal: abort.signal }).then(result => {
       if (made.turn !== turn || controller.state.turn !== turn) return;
-      const set = cleanChoices(result?.choices, `${kind}-${turn}`);
+      const set = cleanChoices(marked(result), `${kind}-${turn}`);
       if (!set.length) return;
       made[kind] = Object.freeze(set);
       voice.prefetch(set, { role: 'her' });
@@ -552,7 +597,7 @@ function somethingElse() {
     again = null;
     const previous = modeView; modeView = null;
     // The replaced batch redraws through the controller like any reveal (250 ms settle first).
-    if (!controller.replace(result?.choices, turn)) modeView = previous;
+    if (!controller.replace(marked(result), turn)) modeView = previous;
   }).catch(() => { if (again === abort) again = null; });
 }
 
@@ -571,7 +616,8 @@ function shownReply(item) {
   const side = label === 'yes' ? 'yes' : label === 'no' ? 'no' : null;
   if (!side) return item;
   const phrase = answered[side];
-  return { ...item, label: phrase.label, say: phrase.say, ...(answered.feeling ? { symbol: phrase.symbol, symbolId: phrase.symbolId, badge: side } : { symbol: side, symbolId: undefined }) };
+  // No tile of the yes-or-no pair, merged or not, carries the AI mark (spec 2026-11-07 §6).
+  return { ...item, label: phrase.label, say: phrase.say, ...(answered.feeling ? { symbol: phrase.symbol, symbolId: phrase.symbolId, badge: side } : { symbol: side, symbolId: undefined, badge: undefined }) };
 }
 function sayCorner(side) {
   const state = controller.state, full = answersOn(state) ? answered[side] : null;
@@ -674,7 +720,7 @@ function paintStrip(state) {
 function middle(state) {
   if (page) {
     const cells = pageCells(), { shown, more, next } = paginate(pageItems(page), pageOffset);
-    const out = shown.map((item, i) => tile(item.label, 'item', () => controller.sayFixed(item.say), cells[i], item.say));
+    const out = shown.map((item, i) => tile(item.label, 'item', () => controller.sayFixed(item.say), cells[i], item.say, item));
     if (more) out.push(tile('More', 'nav', () => { pageOffset = next; gridKey = ''; renderGrid(controller.state); }, cells[10], 'More'));
     out.push(tile('Back', 'nav', closePage, cells[11], 'Back'));
     return out;
@@ -780,7 +826,8 @@ function renderGrid(state) {
     const replies = state.choices.length > 0 && !state.stale;
     grid.append(tile(fixed.more.label, 'static', () => controller.sayFixed(SPOKEN.more), fixed.more.area, SPOKEN.more));
     for (const key of ['ask', 'comment']) {
-      const el = tile(fixed[key].label, `mode${modeView === key ? ' on' : ''}${replies ? '' : ' off'}`, replies ? () => toggleMode(key) : null, fixed[key].area, fixed[key].label);
+      // The model writes what a mode offers: the AI mark, lit or dimmed (spec 2026-11-07 §4).
+      const el = tile(fixed[key].label, `mode${modeView === key ? ' on' : ''}${replies ? '' : ' off'}`, replies ? () => toggleMode(key) : null, fixed[key].area, fixed[key].label, { badge: 'ai' });
       el.dataset.mode = key; grid.append(el);
     }
     grid.append(tile(fixed.else.label, 'static', somethingElse, fixed.else.area, SPOKEN.else));
@@ -1217,7 +1264,7 @@ function replacementFor(data, question) {
   stagedBatch(record).then(result => {
     if (mine !== lifecycle || staging !== record) return;
     staging = null;
-    if (!controller.stageReplacement(result?.choices)) return;
+    if (!controller.stageReplacement(marked(result))) return;
     diagnostic(`Question: ${question} (replies waiting for a neutral moment)`);
     setTimeout(swapAtNeutral, NEUTRAL_CHECK_MS);
   }, error => {
@@ -1766,15 +1813,33 @@ $('chatLikes').addEventListener('change', async () => {
     void showWorld();
   } catch { $('chatLikesNote').textContent = 'Likes were not saved. Try again.'; }
 });
-// Her pages (spec 2026-10-28 §2): one per line, up to twenty lines of forty
-// characters, saved to this device's settings when the box is left.
+// Her pages (spec 2026-10-28 §2, 2026-11-07 §2/§6): one per line, forty
+// characters, twenty lines (About me ten), each `words`, `words = picture word`
+// or `words = none`; saved to this device's settings when the box is left. The
+// hub picks a picture for a plain line and refuses an unknown picture word: the
+// page reads the list back, so the box, the strip and her page show what was kept.
 for (const [key, field] of LIST_FIELDS) $(field).addEventListener('change', async () => {
-  const list = [...new Set($(field).value.split('\n').map(line => line.trim().slice(0, 40)).filter(Boolean))].slice(0, 20);
+  const seen = new Set(), list = [];
+  for (const line of $(field).value.split('\n')) {
+    const item = parseLine(line);
+    if (!item.label || seen.has(item.label.toLowerCase())) continue;
+    seen.add(item.label.toLowerCase()); list.push(item);
+  }
+  list.splice(LIST_MAX[key]);
   const note = $(`${field}Note`);
   try {
-    const saved = await fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [field]: list }) });
-    if (!saved.ok) throw new Error();
-    setList(key, list);
+    const posted = await fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [field]: list }) });
+    if (!posted.ok) throw new Error();
+    const stored = (await (await fetch('/settings')).json())[field];
+    const kept = Array.isArray(stored) ? stored.map(listItem).filter(Boolean) : [];
+    const same = kept.length === list.length && list.every((item, i) => kept[i].label === item.label &&
+      (item.symbol === undefined || (item.symbol === null ? kept[i].symbol === null : kept[i].symbol === item.symbol)));
+    setList(key, stored);
+    if (!same) {
+      const unknown = list.find(item => typeof item.symbol === 'string' && hasVocabulary() && !knowsPicture(item.symbol));
+      note.textContent = unknown ? `Not saved: no picture called ${unknown.symbol}.` : 'Not saved. Try again.';
+      return;
+    }
     note.textContent = list.length ? `Saved ${list.length} line${list.length === 1 ? '' : 's'} on this computer.` : 'Saved: nothing on this page on this computer.';
   } catch { note.textContent = 'Not saved. Try again.'; }
 });

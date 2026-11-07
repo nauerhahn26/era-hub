@@ -733,3 +733,69 @@ hidden half hour, 5 "Reload". Only 3 and 5 change code.
       percent is shown as "<n> %" like an unlisted delay; the §6 browser
       case records each play's volume (0.6 ×3, her pick at 1, 0.4 after the
       select saves).
+
+## About me in her own words + the rail, mode and AI icons (dad, 11/7) — spec 2026-11-07
+Dad 11/7: the About me lines were "a bunch of words", the rail and mode tiles
+need a question bubble and a comment bubble, and AI-made tiles a mark; he
+chose the sparkles, and "then build and publish". Preflight (11/7): the
+badge mechanism (`attachBadge`/`placeBadge`), the hub's `generated` flag
+on a batch, the hub's text pick (`chat-symbols.js pickSymbol`) and the
+phrase table all exist; `planPictures` has no concept without an id yet
+(the one new shape). Posture: implementing, tests first, each unit gated.
+- [x] I1 pictures: phrase pins (question, comment), the drawn `comment`
+      concept with no id in every style, the pair rule, `attachBadge('ai')`
+      sparkles, yes/no outranks ai (spec §3, §4). Tests first in
+      chat-symbols / chat-pictures; the vocabulary sheet tool tolerates an
+      id-less concept; `tools/chat-vocabulary-sheet.mjs` unchanged otherwise.
+      Built 11/7: `comment` is left out of the model's enum (only concepts
+      with an id); the pair rule is two tiles, one badged, neither a reply,
+      so a generated reply never repeats a rail picture; `badgeOf` picks the
+      one badge (yes/no over ai, none on a check mark, cross or no picture);
+      chat-symbols 15/15, chat-pictures 20/20, chat-vocabulary 11/11,
+      chat-picture-layout 12/12, chat-pictures-offline 4/4.
+- [x] I2 page: the mark on the mode tiles always and on every reply of a
+      `generated: true` batch; never on local sets (spec §4). chat-browser.
+      Built 11/7: `marked(result)` stamps `badge: 'ai'` on the four entry
+      points (reveal, press replacement, Something else, made sets) and
+      cleanChoices keeps it, so Back restores it; a merged Yes/No clears it.
+      chat-browser 18/18 (new AI-mark case; §11 asserts no sparkle). A mode
+      tile whose picture is set aside for its words shows no mark (§4).
+- [x] A1 hub: lists of `{label, symbol}` with strings accepted, symbol
+      validated against the table, About me capped at ten, the new generic
+      defaults (spec §2). chat-turns first.
+      Built 11/7: items are `{label, symbol, symbolId}` (§6); a string or a
+      missing `symbol` takes `chat-symbols.js pickPicture` at save (a word-index
+      pick keeps its library id, `chat` stores null); stored strings and the
+      question/comment defaults are picked at read; a stored word the table
+      lost is picked again on read, never a broken list; a pre-cap About me
+      list keeps its first ten. chat-turns 25/25, chat-test-mode-hub 1/1.
+- [x] A2 page + dialog: About me = stories then `chatAbout` lines with their
+      pictures, no world lines; `words = picture word` parsed in the dialog
+      (hub pick when absent, `chat` = no picture, unknown word refused), the
+      preview strip under each list box; index.html text says ten (spec §2).
+      chat-browser; the VM smoke's story round trip unchanged.
+      Built 11/7: `loadWorld` is gone (the API still serves `about`/`week`);
+      the POST stays 204, so the dialog reads `/settings` back and a list it
+      did not keep says "Not saved: no picture called <word>." (`knowsPicture`
+      names it); the box is rewritten `label = word`/`= none`; the strip plans
+      with `planPictures` in her picture style. chat-browser 18/18 (the her
+      pages case runs the hub's own list door on a scratch file), chat-ui
+      38/38, chat-storage-ui 2/2, chat-picture-layout 12/12.
+- [ ] A3 devices: her own ten lines on the two home devices as settings (the
+      school device when awake), never in the repo.
+- [x] I3 page: the AI mark in the tile's own top-right corner when the tile
+      shows no picture (set aside, or a words-only reply); her pages' items fit
+      stacked-big (spec §7). Tests first.
+      Built 11/7: `badgeOf` returns `ai` with no plan (never for the yes-or-no
+      pair: an entry of type yes/no or symbol yes/no); a Yes/No badge with no
+      plan is null and `placeBadge` still hides one without a picture.
+      `placeBadge` puts the AI mark at round(height / 8) clamped 28–56 px, 6 px
+      in from the top and right (`CORNER`, anchored by `right` so a tile that
+      narrows after a resize keeps it inside), after `fitTile` in `fit`. `fit`
+      passes `profile: 'stacked-big'` for `.tile.item` only; the branch now
+      takes the 6 px stacked gap out of the label's 70 % so the picture keeps
+      a full 30 % (it measured 28.6 % before). The §4 "set aside shows no mark"
+      assertion is replaced: at 1280×800 the mode tiles set their pictures
+      aside and carry the mark in the corner. chat-symbols 16/16,
+      chat-picture-layout 13/13, chat-browser 18/18 (the six chat suites
+      134/134).

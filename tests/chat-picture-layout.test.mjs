@@ -31,7 +31,8 @@ test('page pictures are planned fixed tiles first and never repeat: alternate, t
   const entries = [
     { label: 'yes', type: 'yes' }, { label: '', type: 'question' }, { label: 'no', type: 'no' },
     { label: 'My questions', type: 'page' }, { label: 'My comments', type: 'page' }, { label: 'About me', type: 'page' },
-    { label: 'Tell me more', type: 'static' }, { label: 'Ask a question', type: 'mode' }, { label: 'Make a comment', type: 'mode' }, { label: 'Something else', type: 'static' },
+    // The mode tiles carry the AI mark (spec 2026-11-07 §4), so each pairs with its rail tile (§3).
+    { label: 'Tell me more', type: 'static' }, { label: 'Ask a question', type: 'mode', badge: 'ai' }, { label: 'Make a comment', type: 'mode', badge: 'ai' }, { label: 'Something else', type: 'static' },
     { label: 'Yes', type: 'response', symbol: 'yes', symbolId: id('yes') },
     { label: 'Music', type: 'response', symbol: 'music', symbolId: id('music') },
     { label: 'Songs', type: 'response', symbol: 'music', symbolId: id('music') },
@@ -40,13 +41,15 @@ test('page pictures are planned fixed tiles first and never repeat: alternate, t
   const plan = symbols.planPictures(entries);
   assert.equal(plan[0].id, id('yes')); assert.equal(plan[2].id, id('no'));
   assert.equal(plan[1], null, 'the question strip never has a picture');
-  assert.deepEqual(plan.slice(3, 10).map(item => item.word), ['think', 'remember', 'me', 'more', 'question', 'tell', 'something else']);
+  assert.deepEqual(plan.slice(3, 10).map(item => item.word), ['question', 'comment', 'me', 'more', 'question', 'comment', 'something else']);
+  assert.equal(plan[3].id, plan[7].id, 'My questions and the marked Ask a question share the question bubble');
+  assert.deepEqual([plan[4].kind, plan[4].drawn, plan[8].kind, plan[8].drawn], ['drawn', 'comment', 'drawn', 'comment'], 'the comment bubble is drawn in-house');
   // Yes and No are her boards' pair (spec §11): a reply "Yes" shows the corner's check mark too.
   assert.equal(plan[10].id, id('yes'), 'a reply "Yes" shows the same yes picture as the corner');
   assert.equal(plan[11].id, id('music'));
   assert.equal(plan[12].id, id('chat'), 'a second music reply falls back to the bubble picture');
   assert.equal(plan[13], null, 'a third has no picture rather than a repeat');
-  const shown = plan.filter((item, i) => item && i !== 10).map(item => item.id);
+  const shown = plan.filter((item, i) => item && ![7, 8, 10].includes(i)).map(item => item.id || 'drawn:' + item.drawn);
   assert.equal(new Set(shown).size, shown.length, 'nothing else repeats');
   assert.equal(symbols.planPictures(entries, { variant: 'bw' })[11].src, `/symbol/${id('music')}?color=false`);
   assert.equal(symbols.planPictures(entries)[11].src, `/symbol/${id('music')}`);
@@ -55,7 +58,7 @@ test('page pictures are planned fixed tiles first and never repeat: alternate, t
   assert.equal(emoji[1].src, null); assert.equal(emoji[1].kind, 'drawn', 'no emoji for the concept: the drawn picture');
   const drawnPage = symbols.planPictures(['pizza', 'pasta', 'apple'].map(word => ({ label: word, type: 'response', symbol: word, symbolId: id(word) })), { variant: 'emoji' });
   assert.deepEqual(drawnPage.map(item => item && item.drawn), ['chat', null, null], 'the emoji style never repeats a drawn picture either');
-  for (const item of symbols.planPictures(entries).filter(Boolean)) assert.match(item.src, /^\/symbol\/\d+(\?color=false)?$/, 'never another host');
+  for (const item of symbols.planPictures(entries).filter(item => item && item.src)) assert.match(item.src, /^\/symbol\/\d+(\?color=false)?$/, 'never another host');
 });
 
 test('a replacement keeps each unchanged reply\'s picture; only new labels get pictures planned (review fix)', () => {
@@ -202,9 +205,15 @@ test('the Chat page lays pictures out by board law and keeps every page free of 
     assert.equal(tiles.find(tile => tile.type === 'yes').symbol, 'yes'); assert.equal(tiles.find(tile => tile.type === 'no').symbol, 'no');
     // Yes and No are her boards' pair (spec §11): a Yes or No reply shares the corner's picture; nothing else repeats.
     const pair = new Set([tiles.find(tile => tile.type === 'yes').symbolId, tiles.find(tile => tile.type === 'no').symbolId]);
-    const shown = tiles.filter(tile => tile.picture && !(tile.type === 'response' && pair.has(tile.symbolId))).map(tile => tile.symbolId);
+    // The marked mode tiles pair with their rail tiles (spec 2026-11-07 §3): the question bubble, the drawn comment bubble.
+    const look = tile => tile.symbolId || 'drawn:' + tile.symbol;
+    const shown = tiles.filter(tile => tile.picture && tile.type !== 'mode' && !(tile.type === 'response' && pair.has(tile.symbolId))).map(look);
     assert.equal(new Set(shown).size, shown.length, `${viewport}: no two tiles share a picture (${shown})`);
+    const page = Object.fromEntries(tiles.filter(tile => ['page', 'mode'].includes(tile.type)).map(tile => [tile.text, tile]));
+    assert.equal(page['Ask a question'].symbolId, page['My questions'].symbolId); assert.equal(Number(page['Ask a question'].symbolId), id('question'));
+    for (const text of ['My comments', 'Make a comment']) assert.deepEqual([page[text].symbol, page[text].picture.tag], ['comment', 'svg'], `${viewport}: ${text}`);
     for (const tile of tiles.filter(tile => tile.picture)) {
+      if (tile.symbol === 'comment') continue;
       assert.match(tile.picture.src || '', /^\/symbol\/\d+$/, tag(tile));
       assert.ok(tile.font >= 44 - 0.5, `${tag(tile)} ${tile.font}px is under the 44 px floor`);
       assert.ok(tile.fits, `${tag(tile)} does not fit at ${tile.font}px`);
@@ -423,4 +432,59 @@ test('a stacked picture shorter than 44 px is a speck: it is set aside and the w
   const roomy = await run('Something different', 480, 300);
   assert.equal(roomy.layout, 'stacked'); assert.ok(roomy.picture >= 44, JSON.stringify(roomy));
   assert.equal((await run('Music', 480, 300)).layout, 'beside');
+});
+
+// Her pages keep their pictures (spec 2026-11-07 §7): the items of her three
+// pages fit with the stacked-big profile (the label at most 70 % of the height,
+// stepping down through 60 px to the 44 px floor), so "I love music" keeps a
+// picture of at least 30 % at 1280x800 with smaller words; a reply with the same
+// words keeps the default law.
+test('her page items fit stacked-big at 1280x800 and keep their pictures; a reply with the same words keeps the default law', { timeout: 90000 }, async t => {
+  const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'era-chat-layout-'));
+  const server = serve(scratch, []); server.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(scratch, { recursive: true, force: true }); });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, hasTouch: true }), errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const about = [['I love music', 'music'], ['I go to school', 'school'], ['I like to draw', 'draw']].map(([label, symbol]) => ({ label, symbol, symbolId: id(symbol) }));
+  await page.route('**/settings', route => route.request().method() === 'GET'
+    ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ dwellMs: 1200, pauseGoes: 'home', chatAbout: about }) }) : route.continue());
+  await page.route('**/chat/api/choices', route => route.fulfill({ status: 200, contentType: 'application/json',
+    body: JSON.stringify({ kind: 'generated', choices: withSymbols([{ id: 'choice-1', label: 'I love music', say: 'I love music.', symbol: 'music' }]), timings: { totalMs: 3 } }) }));
+  await page.goto(base + '/chat/');
+  await page.waitForFunction(() => document.body.dataset.storageReady === 'true' && document.querySelectorAll('#grid img.chat-symbol').length >= 6);
+  // What the page drew, then what each profile draws on the same tile.
+  const probe = selector => page.evaluate(async selector => {
+    const { fitTile } = await import('/chat/tile-fit.js');
+    const tile = [...document.querySelectorAll(selector)].find(el => el.querySelector('.label').textContent === 'I love music');
+    const picture = tile.querySelector('.chat-symbol'), style = getComputedStyle(tile);
+    const content = tile.getBoundingClientRect().height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+    const look = () => ({ classes: ['beside', 'stacked', 'picture-set-aside'].filter(name => tile.classList.contains(name)), font: tile.style.fontSize, reduced: tile.dataset.fontReduced || null,
+      share: getComputedStyle(picture).display === 'none' ? 0 : picture.getBoundingClientRect().height / content });
+    const shown = look();
+    fitTile(tile); const law = look();
+    fitTile(tile, { profile: 'stacked-big' }); const big = look();
+    return { shown, law, big };
+  }, selector);
+  await page.locator('#grid .tile.page', { hasText: 'About me' }).click();
+  await page.waitForFunction(() => [...document.querySelectorAll('#grid .tile.item .label')].some(label => label.textContent === 'I love music')
+    && [...document.querySelectorAll('#grid .tile.item img.chat-symbol')].every(img => img.complete && img.naturalWidth > 0));
+  const item = await probe('#grid .tile.item');
+  assert.deepEqual(item.shown, item.big, `a page item fits with the stacked-big profile: ${JSON.stringify(item)}`);
+  assert.deepEqual(item.shown.classes, ['stacked'], JSON.stringify(item));
+  assert.ok(item.shown.share >= 0.30 - 0.005, `the picture keeps ${item.shown.share.toFixed(3)} of the height`);
+  assert.equal(item.shown.reduced, '1', 'the words step down instead'); assert.ok(parseFloat(item.shown.font) >= 44);
+  assert.notDeepEqual(item.law, item.big, 'the default law would draw this tile otherwise');
+  // A reply with the same words: the default law, as before.
+  await page.locator('#grid .tile.nav', { hasText: 'Back' }).click();
+  await page.locator('#partnerOpen').click();
+  await page.locator('#testing > summary').click();
+  await page.locator('#typedQuestion').fill('What do you like?');
+  await page.locator('#typedAsk').click();
+  await page.waitForFunction(() => [...document.querySelectorAll('#grid .tile.response .label')].some(label => label.textContent === 'I love music'));
+  await page.waitForTimeout(100);
+  const reply = await probe('#grid .tile.response');
+  assert.deepEqual(reply.shown, reply.law, `a reply keeps the default law: ${JSON.stringify(reply)}`);
+  assert.deepEqual(errors, []);
 });

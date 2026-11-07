@@ -404,29 +404,91 @@ test('what she likes: a bounded list of short phrases, the generic default when 
   for (const site of [undefined, 'same-origin', 'none']) assert.deepEqual(applyLikesSetting({}, { chatLikes: ['swim'] }, site), { chatLikes: ['swim'] });
 });
 
-test('her lists (stable frame §2): questions, comments and about, generic defaults, each key cleaned on its own', async t => {
+test('her lists (stable frame §2, spec 2026-11-07 §2/§6/§8): items carry a table picture, strings still read, generic defaults, each key cleaned on its own', async t => {
   const dataDir = await directory(t);
-  assert.deepEqual(DEFAULT_QUESTIONS, ['How are you?', 'What are we doing today?', 'Did you have fun?', 'Can I have a turn?', "What's for dinner?",
-    'Where are we going?', 'Who is coming?', 'Can we play?', 'Is it time yet?', "What's that?"]);
-  assert.deepEqual(DEFAULT_COMMENTS, ["That's cool!", 'That sounds fun!', 'I love that!', 'No way!', 'Silly!', "I'm tired", "I'm hungry",
-    'Again, please', "I don't like that", 'Wait for me']);
-  assert.deepEqual(DEFAULT_ABOUT, ['I talk with my eyes', 'I love books', 'I like to draw', 'Ask me anything']);
-  const defaults = { chatQuestions: DEFAULT_QUESTIONS, chatComments: DEFAULT_COMMENTS, chatAbout: DEFAULT_ABOUT };
-  assert.deepEqual(chatLists(dataDir), defaults, 'no app-settings file means the defaults');
+  const { conceptId, pickPicture, tablePicture } = require('../chat-symbols.js');
+  const vocabulary = JSON.parse(fsSync.readFileSync(new URL('../public/chat/vocabulary.json', import.meta.url), 'utf8'));
+  const tableWords = new Set(vocabulary.concepts.map(concept => concept.word));
+  // My questions and My comments (§8): each line pins a table word, so the pre-warmed cache holds every default picture.
+  assert.deepEqual(DEFAULT_QUESTIONS, [{ label: 'How are you?', symbol: 'feelings' }, { label: 'What are we doing today?', symbol: 'today' },
+    { label: 'Did you have fun?', symbol: 'fun' }, { label: 'Can I have a turn?', symbol: 'my turn' }, { label: "What's for dinner?", symbol: 'dinner' },
+    { label: 'Where are we going?', symbol: 'go' }, { label: 'Who is coming?', symbol: 'come here' }, { label: 'Can we play?', symbol: 'play' },
+    { label: 'Is it time yet?', symbol: 'time' }, { label: "What's that?", symbol: 'point' }]);
+  assert.deepEqual(DEFAULT_COMMENTS, [{ label: "That's cool!", symbol: 'cool' }, { label: 'That sounds fun!', symbol: 'fun' },
+    { label: 'I love that!', symbol: 'love' }, { label: 'No way!', symbol: 'surprised' }, { label: 'Silly!', symbol: 'silly' },
+    { label: "I'm tired", symbol: 'tired' }, { label: "I'm hungry", symbol: 'hungry' }, { label: 'Again, please', symbol: 'more' },
+    { label: "I don't like that", symbol: 'don\'t like' }, { label: 'Wait for me', symbol: 'wait' }]);
+  // About me (§2): whole first-person lines, each with its picture word; "Ask me anything" has none.
+  assert.deepEqual(DEFAULT_ABOUT, [{ label: 'I talk with my eyes', symbol: 'eyes' }, { label: 'I go to school', symbol: 'school' },
+    { label: 'I love music', symbol: 'music' }, { label: 'I love books', symbol: 'book' }, { label: 'I like to draw', symbol: 'draw' },
+    { label: 'I like movies', symbol: 'cinema' }, { label: 'I like to be silly', symbol: 'silly' }, { label: 'Ask me anything', symbol: null }]);
+  const read = chatLists(dataDir);
+  for (const [key, fallback] of [['chatQuestions', DEFAULT_QUESTIONS], ['chatComments', DEFAULT_COMMENTS], ['chatAbout', DEFAULT_ABOUT]]) {
+    assert.deepEqual(read[key], fallback.map(item => ({ ...item, symbolId: item.symbol ? conceptId(item.symbol) : null })), key + ': the defaults read with the table ids');
+    for (const item of fallback) {
+      assert.ok(item.symbol === null || tableWords.has(item.symbol), `a default's picture is a table word (§8): ${item.label}`);
+      if (item.symbol) assert.ok(conceptId(item.symbol) > 0, `a default's picture has a pre-warmed id: ${item.label}`);
+      // Where the hub's own pick is a table word, the default keeps it.
+      const hub = pickPicture(item.label).symbol;
+      if (hub && key !== 'chatAbout') assert.equal(item.symbol, hub, `the hub's table pick is kept: ${item.label}`);
+    }
+  }
+  // §8: the hub's pick is a table word (the table's id) or no picture; a word-index pick off the table is no picture.
+  assert.deepEqual(pickPicture('Can I have a turn?'), { symbol: null, symbolId: null }, 'the off-table *turn* pick is words alone');
+  assert.deepEqual(pickPicture('That sounds fun!'), { symbol: null, symbolId: null }, 'the off-table *sounds* pick is words alone');
+  assert.deepEqual(pickPicture('I love music'), { symbol: 'music', symbolId: conceptId('music') });
+  for (const label of ['Who is coming?', 'Where are we going?', 'Lasagna!', 'Why?', 'I like trains']) {
+    const pick = pickPicture(label);
+    assert.ok(pick.symbol === null ? pick.symbolId === null : tableWords.has(pick.symbol) && pick.symbolId === conceptId(pick.symbol), label + ' ' + JSON.stringify(pick));
+  }
+  assert.deepEqual(tablePicture('music', 5), { symbol: 'music', symbolId: conceptId('music') }, 'a table word takes the table id');
+  assert.deepEqual(tablePicture('comment'), { symbol: 'comment', symbolId: null }, 'the drawn concept has no id');
+  for (const [symbol, id] of [['lasagna', 9051], ['turn', 6630], ['coming', 32669], ['sounds', 27073], ['lasagna', undefined], ['gone-word', null]])
+    assert.equal(tablePicture(symbol, id), null, `an off-table word is refused with or without an id: ${symbol}`);
+  // Strings stored today still read: the label, the hub's pick.
   await fs.writeFile(path.join(dataDir, 'app-settings.json'), JSON.stringify({ chatQuestions: 'x', chatComments: ['Yum!'], chatAbout: [] }));
-  assert.deepEqual(chatLists(dataDir), { chatQuestions: DEFAULT_QUESTIONS, chatComments: ['Yum!'], chatAbout: [] }, 'each key on its own');
+  const legacy = chatLists(dataDir);
+  assert.deepEqual(legacy.chatQuestions.map(item => item.label), DEFAULT_QUESTIONS.map(item => item.label), 'a list that is not clean reads as its default');
+  assert.deepEqual(legacy.chatAbout, [], 'each key on its own');
+  assert.equal(legacy.chatComments.length, 1); assert.equal(legacy.chatComments[0].label, 'Yum!');
+  // POST: objects or strings, trimmed, deduplicated ignoring case.
+  const music = { label: 'I love music', symbol: 'music', symbolId: conceptId('music') };
+  assert.deepEqual(applyListsSetting({ a: 1 }, { chatQuestions: [' Why? ', 'why?'], chatAbout: [{ label: ' I love music ', symbol: 'music' }, { label: 'Ask me', symbol: null }] }),
+    { a: 1, chatQuestions: [{ label: 'Why?', ...pickPicture('Why?') }],
+      chatAbout: [music, { label: 'Ask me', symbol: null, symbolId: null }] });
+  assert.deepEqual(applyListsSetting({}, { chatAbout: [{ label: 'I love music' }] }).chatAbout, [music], 'no symbol: the hub picks and stores the pick');
+  assert.deepEqual(applyListsSetting({}, { chatAbout: ['I love music'] }).chatAbout, [music], 'a string: the hub picks');
+  assert.deepEqual(applyListsSetting({}, { chatAbout: [{ label: 'I love music', symbol: 'music', symbolId: 5 }] }).chatAbout, [music], 'a table word takes the table id');
+  assert.deepEqual(applyListsSetting({}, { chatComments: [{ label: 'Talk soon', symbol: 'comment' }] }).chatComments,
+    [{ label: 'Talk soon', symbol: 'comment', symbolId: null }], 'the drawn concept has no id');
+  assert.deepEqual(applyListsSetting({}, { chatComments: ['Hmm'] }).chatComments.map(item => item.label), ['Hmm']);
+  // Twenty questions or comments, ten About me lines.
   const twenty = Array.from({ length: 20 }, (_, i) => 'item ' + i);
-  assert.deepEqual(applyListsSetting({ a: 1 }, { chatQuestions: [' Why? ', 'why?', 'How?'], chatAbout: twenty }),
-    { a: 1, chatQuestions: ['Why?', 'How?'], chatAbout: twenty }, 'trimmed, deduplicated ignoring case, twenty allowed');
-  assert.deepEqual(applyListsSetting({ chatComments: ['x'] }, { chatComments: ['y'.repeat(40)] }), { chatComments: ['y'.repeat(40)] });
-  for (const junk of ['Why?', [1], ['x'.repeat(41)], ['bad\u0007'], ['<b>'], [''], [...twenty, 'one more'], null, {}])
+  assert.equal(applyListsSetting({}, { chatQuestions: twenty }).chatQuestions.length, 20);
+  assert.equal(applyListsSetting({}, { chatAbout: twenty.slice(0, 10) }).chatAbout.length, 10);
+  assert.deepEqual(applyListsSetting({ chatAbout: ['x'] }, { chatAbout: twenty.slice(0, 11) }), { chatAbout: ['x'] }, 'eleven About me lines are refused');
+  for (const junk of ['Why?', [1], ['x'.repeat(41)], ['bad\u0007'], ['<b>'], [''], [...twenty, 'one more'], null, {},
+    [{ label: 'Hi', symbol: 'no-such-picture' }], [{ label: 'Hi', symbol: 'lasagna' }], [{ label: 'Hi', symbol: 'lasagna', symbolId: -3 }],
+    [{ label: 'Hi', symbol: 'lasagna', symbolId: 1.5 }], [{ label: 'Lasagna!', symbol: 'lasagna', symbolId: 9051 }], [{ label: 'Can I have a turn?', symbol: 'turn', symbolId: 6630 }],
+    [{ label: 'Hi', symbol: 7 }], [{ symbol: 'music' }], [{ label: 7 }], [['Hi']]])
     for (const key of ['chatQuestions', 'chatComments', 'chatAbout'])
       assert.deepEqual(applyListsSetting({ [key]: ['x'] }, { [key]: junk }), { [key]: ['x'] }, key + ' ' + JSON.stringify(junk));
-  assert.deepEqual(applyListsSetting({ chatQuestions: ['x'] }, { chatQuestions: 7, chatComments: ['Wow'] }), { chatQuestions: ['x'], chatComments: ['Wow'] },
-    'a bad key never blocks a good one');
+  assert.deepEqual(applyListsSetting({ chatQuestions: ['x'] }, { chatQuestions: 7, chatComments: ['Wow'] }).chatQuestions, ['x'], 'a bad key never blocks a good one');
+  assert.equal(applyListsSetting({ chatQuestions: ['x'] }, { chatQuestions: 7, chatComments: ['Wow'] }).chatComments[0].label, 'Wow');
   assert.deepEqual(applyListsSetting({ a: 1 }, {}), { a: 1 });
   for (const site of ['cross-site', 'same-site']) assert.deepEqual(applyListsSetting({}, { chatAbout: ['hi'] }, site), {});
-  for (const site of [undefined, 'same-origin', 'none']) assert.deepEqual(applyListsSetting({}, { chatAbout: ['hi'] }, site), { chatAbout: ['hi'] });
+  for (const site of [undefined, 'same-origin', 'none']) assert.equal(applyListsSetting({}, { chatAbout: ['hi'] }, site).chatAbout[0].label, 'hi');
+  // Stored objects read back as stored; a stored word off the table (one the table no longer has, or a word-index
+  // pick saved before §8) reads as no picture, never a broken list and never the defaults.
+  await fs.writeFile(path.join(dataDir, 'app-settings.json'), JSON.stringify({ chatAbout: [music, { label: 'I like trains', symbol: 'gone-word', symbolId: null }, { label: 'Hello there', symbol: null, symbolId: null }],
+    chatQuestions: [{ label: 'Can I have a turn?', symbol: 'turn', symbolId: 6630 }, { label: 'Can we play?', symbol: 'play', symbolId: conceptId('play') }] }));
+  const stored = chatLists(dataDir).chatAbout;
+  assert.deepEqual(stored, [music, { label: 'I like trains', symbol: null, symbolId: null }, { label: 'Hello there', symbol: null, symbolId: null }]);
+  assert.deepEqual(chatLists(dataDir).chatQuestions, [{ label: 'Can I have a turn?', symbol: null, symbolId: null }, { label: 'Can we play?', symbol: 'play', symbolId: conceptId('play') }],
+    'an off-table pick stored before §8 is words alone, the list kept');
+  // A stored About me list from before the cap (up to twenty) keeps its first ten.
+  await fs.writeFile(path.join(dataDir, 'app-settings.json'), JSON.stringify({ chatAbout: twenty }));
+  assert.deepEqual(chatLists(dataDir).chatAbout.map(item => item.label), twenty.slice(0, 10));
 });
 
 test('a turn record keeps the stable frame fields (§4): the mode she swapped to, the page she opened, Something else', () => {
