@@ -121,3 +121,24 @@ which tiles the model wrote.
   refuses an unknown word, and the preview strip shows the pick.
 - The VM smoke (chat-ui-smoke) keeps passing: its About me round trip looks
   for the saved story, which still comes first.
+
+## 6. Builder check (11/7): three calls
+
+- **A hub pick outside the table keeps its picture.** A stored line is
+  `{ label, symbol, symbolId }`: `symbol` a table word (id from the table),
+  or a word the table lacks paired with the library id the hub's word index
+  found for it (the "lasagna" branch the page already renders), or null for
+  no picture. A POST is accepted when `symbol` is a table word, or a
+  word with a positive integer `symbolId`, or null; anything else is
+  refused. So "Can I have a turn?" keeps the hub's *turn* picture.
+- **`= none` means no picture, and the box shows every pick.** In the
+  dialog `words = none` stores `symbol: null`; a plain `words` line asks the
+  hub to pick. When the dialog fills a box from the stored list it writes
+  `label = word` (or `label = none`) on every line, so a list round-trips
+  without drifting and the partner sees each pick in the box as well as in
+  the preview strip. The shipped "Ask me anything" is stored as `= none`.
+- **A Yes or No answered in full never carries the sparkles.** With a
+  feeling the tile shows the feeling with its Yes/No badge (the badge wins);
+  without one the check mark or the cross is the picture itself and gets no
+  badge. In short: no tile of the yes-or-no pair, merged or not, shows the
+  AI mark. The §11 browser case asserts it.
