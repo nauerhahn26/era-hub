@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const source = await readFile(new URL('../public/chat/symbols.js', import.meta.url), 'utf8');
-const { resolveSymbol, createSymbol, attachSymbol } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const vocabulary = JSON.parse(await readFile(new URL('../public/chat/vocabulary.json', import.meta.url), 'utf8'));
+const { resolveSymbol, createSymbol, attachSymbol, setVocabulary, planPictures, attachPicture, attachBadge, badgeOf } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 test('fixed phrases have distinct familiar navigation, reaction and repair symbols', () => {
   const cases = [
@@ -70,8 +71,9 @@ class Node {
     this.classList = { add: value => this.classes.add(value), remove: value => this.classes.delete(value), contains: value => this.classes.has(value) }; }
   setAttribute(key, value) { this.attributes[key] = String(value); }
   appendChild(child) { child.parentNode = this; this.children.push(child); return child; }
+  replaceChildren(...nodes) { this.children = []; for (const node of nodes) this.appendChild(node); }
   insertBefore(child, before) { child.parentNode = this; const index = this.children.indexOf(before); this.children.splice(index < 0 ? this.children.length : index, 0, child); return child; }
-  querySelector(selector) { return this.children.find(child => selector === '.chat-symbol' ? child.attributes.class === 'chat-symbol' : selector === '.label' && child.attributes.class === 'label') || null; }
+  querySelector(selector) { return this.children.find(child => ['.chat-symbol', '.chat-badge', '.label'].includes(selector) && child.attributes.class === selector.slice(1)) || null; }
   remove() { if (this.parentNode) this.parentNode.children.splice(this.parentNode.children.indexOf(this), 1); }
 }
 const document = { createElementNS(namespace, tagName) { assert.equal(namespace, 'http://www.w3.org/2000/svg'); return new Node(tagName); } };
@@ -171,5 +173,132 @@ test('symbols keep fixed hitboxes, black rest space, accessible words and readab
       assert.equal(await page.getByRole('button', { name: 'Help me say it', exact: true }).count(), 1);
       await page.close();
     }
+  } finally { await browser.close(); }
+});
+
+// ---- the rail, the modes and the AI mark (spec 2026-11-07 §3, §4) ----
+const conceptId = word => vocabulary.concepts.find(concept => concept.word === word).id;
+const FRAME = [
+  { label: 'yes', type: 'yes' }, { label: '', type: 'question' }, { label: 'no', type: 'no' },
+  { label: 'My questions', type: 'page' }, { label: 'My comments', type: 'page' }, { label: 'About me', type: 'page' },
+  { label: 'Tell me more', type: 'static' }, { label: 'Ask a question', type: 'mode', badge: 'ai' }, { label: 'Make a comment', type: 'mode', badge: 'ai' },
+  { label: 'Something else', type: 'static' },
+];
+const tileFor = label => { const tile = new Node('button'); tile.ownerDocument = document; const text = new Node('span'); text.setAttribute('class', 'label'); text.textContent = label; tile.appendChild(text); return tile; };
+
+test('the rail and mode tiles share the question bubble and the drawn comment bubble, in every style (spec 2026-11-07 §3)', () => {
+  assert.equal(setVocabulary(vocabulary), true);
+  for (const variant of ['color', 'bw', 'emoji']) {
+    const plan = planPictures(FRAME, { variant });
+    const [questions, comments, about, , ask, comment] = plan.slice(3, 9);
+    if (variant !== 'emoji') {
+      assert.equal(questions.id, conceptId('question'), variant); assert.equal(ask.id, conceptId('question'), `${variant}: badged Ask a question shares My questions' picture`);
+    }
+    assert.equal(questions.word, 'question'); assert.equal(ask.word, 'question');
+    for (const item of [comments, comment]) assert.deepEqual({ kind: item.kind, drawn: item.drawn, id: item.id, src: item.src, word: item.word },
+      { kind: 'drawn', drawn: 'comment', id: null, src: null, word: 'comment' }, `${variant}: the comment bubble is drawn in-house`);
+    assert.equal(about.word, 'me');
+  }
+});
+
+test('pair rule: a badged and an unbadged tile may share a picture; two unbadged or two badged may not; a reply never repeats a rail picture', () => {
+  assert.equal(setVocabulary(vocabulary), true);
+  const plain = planPictures(FRAME.map(({ badge, ...entry }) => entry));
+  assert.equal(plain[3].id, conceptId('question'));
+  assert.notEqual(plain[7]?.id, conceptId('question'), 'two unbadged tiles never share the question bubble');
+  assert.notEqual(plain[8]?.drawn === 'comment' && plain[8]?.kind, 'drawn', 'two unbadged tiles never share the comment bubble');
+  const both = planPictures([{ label: 'Ask a question', type: 'mode', badge: 'ai' }, { label: 'Ask a question', type: 'mode', badge: 'ai' }]);
+  assert.equal(both[0].id, conceptId('question')); assert.notEqual(both[1]?.id, conceptId('question'), 'two badged tiles never share');
+  // Three never share: the pair is two tiles.
+  const three = planPictures([{ label: 'My questions', type: 'page' }, { label: 'Ask a question', type: 'mode', badge: 'ai' }, { label: 'Ask a question', type: 'static' }]);
+  assert.equal(three.filter(item => item?.id === conceptId('question')).length, 2);
+  // A generated reply (badged) never takes a rail picture, nor the drawn comment bubble a second time.
+  const replies = planPictures([...FRAME, { label: 'About me', type: 'response', badge: 'ai', symbol: 'me', symbolId: conceptId('me') },
+    { label: 'A comment', type: 'response', badge: 'ai', symbol: 'comment' }]);
+  assert.notEqual(replies[10]?.id, conceptId('me'), 'a generated reply never repeats the About me picture');
+  assert.notEqual(replies[11]?.drawn === 'comment' && replies[11]?.kind, 'drawn', 'nor the comment bubble');
+  // A kept picture (a replacement's unchanged reply) counts as shown.
+  const shown = planPictures([{ label: 'My comments', type: 'page' }])[0];
+  const kept = planPictures([{ label: 'My comments', type: 'page' }, { label: 'Make a comment', type: 'mode', badge: 'ai' }, { label: 'Make a comment', type: 'static' }], { keep: [shown] });
+  assert.equal(kept[0], shown); assert.equal(kept[1].drawn, 'comment', 'the badged tile pairs with a kept picture');
+  assert.notEqual(kept[2]?.kind === 'drawn' && kept[2]?.drawn, 'comment', 'a third never does');
+});
+
+test('the drawn comment bubble renders in fixed colours: black outline, white bubble, never currentColor', () => {
+  assert.equal(setVocabulary(vocabulary), true);
+  const [plan] = planPictures([{ label: 'Make a comment', type: 'mode', badge: 'ai' }], { variant: 'bw' });
+  const tile = tileFor('Make a comment');
+  const svg = attachPicture(tile, plan);
+  assert.equal(svg.tagName, 'svg'); assert.equal(tile.dataset.picture, 'drawn'); assert.equal(tile.dataset.symbol, 'comment');
+  assert.equal(tile.dataset.symbolId, undefined);
+  const parts = svg.children;
+  assert.ok(parts.length >= 3, 'a bubble and two text lines');
+  assert.equal(parts[0].attributes.fill, '#fff'); assert.equal(parts[0].attributes.stroke, '#000');
+  for (const part of parts) assert.ok(!Object.values(part.attributes).includes('currentColor'), 'fixed colours');
+  assert.ok(parts.slice(1).every(part => part.attributes.stroke === '#000'), 'black text lines');
+});
+
+test('attachBadge("ai") draws three four-pointed sparkles: violet on the white disc, black in black-and-white; one badge a tile', () => {
+  assert.equal(setVocabulary(vocabulary), true);
+  for (const [variant, colour] of [['color', '#8a5cf6'], ['bw', '#000'], ['emoji', '#8a5cf6']]) {
+    const tile = tileFor('Ask a question');
+    const badge = attachBadge(tile, 'ai', variant);
+    assert.equal(badge.tagName, 'svg', variant); assert.equal(badge.attributes.class, 'chat-badge'); assert.equal(badge.dataset.side, 'ai');
+    assert.equal(badge.attributes['aria-hidden'], 'true');
+    const sparkles = badge.children.filter(child => child.tagName === 'path');
+    assert.equal(sparkles.length, 3, `${variant}: three sparkles`);
+    for (const sparkle of sparkles) {
+      assert.equal(sparkle.attributes.fill, colour, variant);
+      assert.equal((sparkle.attributes.d.match(/[QC]/g) || []).length, 4, `${variant}: four points`);
+    }
+    attachBadge(tile, 'ai', variant); attachBadge(tile, 'yes', 'emoji');
+    assert.equal(tile.children.filter(child => child.attributes.class === 'chat-badge').length, 1, 'one badge a tile');
+    assert.equal(attachBadge(tile, null), null); assert.equal(tile.querySelector('.chat-badge'), null);
+  }
+});
+
+test('badgeOf: yes or no outranks the AI mark; a check-mark or cross picture and a tile without a picture carry none', () => {
+  assert.equal(setVocabulary(vocabulary), true);
+  const plan = word => ({ word, id: 1, kind: 'library', src: '/symbol/1' });
+  assert.equal(badgeOf({ badge: 'ai' }, plan('music')), 'ai');
+  assert.equal(badgeOf({ badge: 'yes' }, plan('hungry')), 'yes');
+  assert.equal(badgeOf({ badge: 'no' }, plan('hungry')), 'no');
+  assert.equal(badgeOf({ badge: 'ai' }, plan('yes')), null, 'the check mark is the meaning: no sparkle on it');
+  assert.equal(badgeOf({ badge: 'ai' }, plan('no')), null);
+  assert.equal(badgeOf({ badge: 'ai' }, null), null, 'no picture, no badge');
+  assert.equal(badgeOf({}, plan('music')), null);
+  assert.equal(badgeOf({ badge: 'other' }, plan('music')), null);
+});
+
+test('the AI mark sits where the check mark sits, at its size, on the drawn comment bubble too', async () => {
+  const { chromium } = await import('playwright');
+  const browser = await chromium.launch({ headless: true });
+  const css = (await readFile(new URL('../public/chat/chat.css', import.meta.url), 'utf8')).replace(/^@import[^;]+;/m, '');
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.route('**/*', route => route.abort());
+    await page.setContent(`<style>${css}</style><main id="app"><div id="grid"></div></main>`);
+    const result = await page.evaluate(async ({ moduleURL, vocabulary }) => {
+      const { setVocabulary, planPictures, attachPicture, attachBadge, placeBadge } = await import(moduleURL);
+      setVocabulary(vocabulary);
+      const grid = document.querySelector('#grid'), out = [];
+      for (const [i, [label, side, variant]] of [['Make a comment', 'ai', 'bw'], ['Make a comment', 'yes', 'emoji'], ['Make a comment', 'ai', 'color']].entries()) {
+        const tile = document.createElement('button'); tile.className = 'tile mode has-symbol beside'; tile.style.gridColumn = i + 1; tile.style.gridRow = 1;
+        const text = document.createElement('span'); text.className = 'label'; text.textContent = label; tile.appendChild(text); grid.appendChild(tile);
+        attachPicture(tile, planPictures([{ label, type: 'mode', badge: 'ai' }], { variant })[0]);
+        const badge = attachBadge(tile, side, variant); placeBadge(tile);
+        const box = tile.getBoundingClientRect(), mark = badge.getBoundingClientRect(), bubble = tile.querySelector('.chat-symbol path');
+        out.push({ side, left: mark.left - box.left, top: mark.top - box.top, width: mark.width, background: getComputedStyle(badge).backgroundColor,
+          fill: getComputedStyle(badge.querySelector('path') || badge).fill, bubbleFill: getComputedStyle(bubble).fill, bubbleStroke: getComputedStyle(bubble).stroke });
+      }
+      return out;
+    }, { moduleURL: `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`, vocabulary });
+    const [bw, yes, colour] = result;
+    for (const key of ['left', 'top', 'width']) assert.ok(Math.abs(bw[key] - yes[key]) <= 1 && Math.abs(colour[key] - yes[key]) <= 1, `${key}: ${JSON.stringify(result)}`);
+    assert.ok(yes.width > 10, 'the badge is drawn');
+    assert.equal(colour.background, 'rgb(255, 255, 255)', 'the white badge disc');
+    assert.equal(colour.fill, 'rgb(138, 92, 246)'); assert.equal(bw.fill, 'rgb(0, 0, 0)');
+    for (const item of result) { assert.equal(item.bubbleFill, 'rgb(255, 255, 255)'); assert.equal(item.bubbleStroke, 'rgb(0, 0, 0)'); }
+    await page.close();
   } finally { await browser.close(); }
 });

@@ -54,11 +54,11 @@
     "i dont want to answer": "no",
     "i dont want to answer now": "not now",
     "my earlier words": "remember",
-    "my questions": "think",
-    "my comments": "remember",
+    "my questions": "question",
+    "my comments": "comment",
     "about me": "me",
     "ask a question": "question",
-    "make a comment": "tell"
+    "make a comment": "comment"
   },
   "concepts": [
     {"word":"yes","id":5584,"alt":["yeah","yep","agree"]},
@@ -451,6 +451,7 @@
     {"word":"ghost","id":5469,"alt":["spooky"]},
     {"word":"fairy","id":5482,"alt":["fairies"]},
     {"word":"robot","id":6208,"alt":["robots"]},
-    {"word":"back","id":31748,"alt":["go back","back to chat"]}
+    {"word":"back","id":31748,"alt":["go back","back to chat"]},
+    {"word":"comment"}
   ]
 }

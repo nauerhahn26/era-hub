@@ -126,11 +126,14 @@ test('with the provider gone and outside requests blocked, Chat tiles show cache
       const img = node.querySelector('img.chat-symbol');
       return { label: node.textContent.trim(), src: img && new URL(img.src).pathname, kind: node.dataset.picture, width: img?.naturalWidth || 0 };
     }));
-    for (const tile of tiles) {
+    // The comment bubble is drawn in-house in every style (spec 2026-11-07 §3): nothing to fetch.
+    // (The dimmed mode tiles are not buttons before a question: My comments is the button here.)
+    assert.deepEqual(tiles.filter(tile => tile.kind === 'drawn').map(tile => tile.label), ['My comments']);
+    for (const tile of tiles.filter(tile => tile.kind !== 'drawn')) {
       assert.match(tile.src || '', /^\/symbol\/\d+$/, `${tile.label} shows a cached library picture`);
       assert.equal(tile.kind, 'library', tile.label); assert.equal(tile.width, 4, tile.label);
     }
-    assert.ok(symbolResponses.length >= tiles.length && symbolResponses.every(state => state === 'hit'), symbolResponses.join(','));
+    assert.ok(symbolResponses.length >= tiles.length - 1 && symbolResponses.every(state => state === 'hit'), symbolResponses.join(','));
     // A reply turn from the hub's own shortcut: its pictures come from the cache too.
     await page.locator('#partnerOpen').click();
     await page.locator('#testing > summary').click();

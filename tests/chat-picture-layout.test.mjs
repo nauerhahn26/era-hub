@@ -31,7 +31,8 @@ test('page pictures are planned fixed tiles first and never repeat: alternate, t
   const entries = [
     { label: 'yes', type: 'yes' }, { label: '', type: 'question' }, { label: 'no', type: 'no' },
     { label: 'My questions', type: 'page' }, { label: 'My comments', type: 'page' }, { label: 'About me', type: 'page' },
-    { label: 'Tell me more', type: 'static' }, { label: 'Ask a question', type: 'mode' }, { label: 'Make a comment', type: 'mode' }, { label: 'Something else', type: 'static' },
+    // The mode tiles carry the AI mark (spec 2026-11-07 §4), so each pairs with its rail tile (§3).
+    { label: 'Tell me more', type: 'static' }, { label: 'Ask a question', type: 'mode', badge: 'ai' }, { label: 'Make a comment', type: 'mode', badge: 'ai' }, { label: 'Something else', type: 'static' },
     { label: 'Yes', type: 'response', symbol: 'yes', symbolId: id('yes') },
     { label: 'Music', type: 'response', symbol: 'music', symbolId: id('music') },
     { label: 'Songs', type: 'response', symbol: 'music', symbolId: id('music') },
@@ -40,13 +41,15 @@ test('page pictures are planned fixed tiles first and never repeat: alternate, t
   const plan = symbols.planPictures(entries);
   assert.equal(plan[0].id, id('yes')); assert.equal(plan[2].id, id('no'));
   assert.equal(plan[1], null, 'the question strip never has a picture');
-  assert.deepEqual(plan.slice(3, 10).map(item => item.word), ['think', 'remember', 'me', 'more', 'question', 'tell', 'something else']);
+  assert.deepEqual(plan.slice(3, 10).map(item => item.word), ['question', 'comment', 'me', 'more', 'question', 'comment', 'something else']);
+  assert.equal(plan[3].id, plan[7].id, 'My questions and the marked Ask a question share the question bubble');
+  assert.deepEqual([plan[4].kind, plan[4].drawn, plan[8].kind, plan[8].drawn], ['drawn', 'comment', 'drawn', 'comment'], 'the comment bubble is drawn in-house');
   // Yes and No are her boards' pair (spec §11): a reply "Yes" shows the corner's check mark too.
   assert.equal(plan[10].id, id('yes'), 'a reply "Yes" shows the same yes picture as the corner');
   assert.equal(plan[11].id, id('music'));
   assert.equal(plan[12].id, id('chat'), 'a second music reply falls back to the bubble picture');
   assert.equal(plan[13], null, 'a third has no picture rather than a repeat');
-  const shown = plan.filter((item, i) => item && i !== 10).map(item => item.id);
+  const shown = plan.filter((item, i) => item && ![7, 8, 10].includes(i)).map(item => item.id || 'drawn:' + item.drawn);
   assert.equal(new Set(shown).size, shown.length, 'nothing else repeats');
   assert.equal(symbols.planPictures(entries, { variant: 'bw' })[11].src, `/symbol/${id('music')}?color=false`);
   assert.equal(symbols.planPictures(entries)[11].src, `/symbol/${id('music')}`);
@@ -55,7 +58,7 @@ test('page pictures are planned fixed tiles first and never repeat: alternate, t
   assert.equal(emoji[1].src, null); assert.equal(emoji[1].kind, 'drawn', 'no emoji for the concept: the drawn picture');
   const drawnPage = symbols.planPictures(['pizza', 'pasta', 'apple'].map(word => ({ label: word, type: 'response', symbol: word, symbolId: id(word) })), { variant: 'emoji' });
   assert.deepEqual(drawnPage.map(item => item && item.drawn), ['chat', null, null], 'the emoji style never repeats a drawn picture either');
-  for (const item of symbols.planPictures(entries).filter(Boolean)) assert.match(item.src, /^\/symbol\/\d+(\?color=false)?$/, 'never another host');
+  for (const item of symbols.planPictures(entries).filter(item => item && item.src)) assert.match(item.src, /^\/symbol\/\d+(\?color=false)?$/, 'never another host');
 });
 
 test('a replacement keeps each unchanged reply\'s picture; only new labels get pictures planned (review fix)', () => {

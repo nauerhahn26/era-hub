@@ -119,7 +119,9 @@ const REFUSAL = /^(?:no|nope|nah)$|^no\s+(?!(?:i|im|we|you|it|its|thats|that|way
 const DISLIKE = /\b(?:dont|do not|didnt|doesnt|wouldnt)\s+like\b|\b(?:hate|hates|dislike|dislikes)\b/;
 
 function symbolWords() {
-  const words = vocabulary().concepts.slice(0, ENUM_CAP).map(concept => concept.word);
+  // A concept drawn in-house (spec 2026-11-07 §3, "comment") has no library id:
+  // it is the page's picture for its own tiles, never the model's pick.
+  const words = vocabulary().concepts.filter(concept => conceptId(concept.word)).slice(0, ENUM_CAP).map(concept => concept.word);
   return words.includes(FALLBACK) ? words : [...words, FALLBACK];
 }
 // A concept's picture id in the vocabulary table, or null (yes/no in full, spec 2026-10-28 §11).
