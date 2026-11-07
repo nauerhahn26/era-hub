@@ -173,3 +173,20 @@ Screenshots at the tablet's 1280×800 and the eye-gaze device's 1920×1080:
   mark is placed and visible with the picture set aside; a words-only
   generated reply carries the corner mark; a yes/no badge without a picture
   stays hidden).
+
+## 8. Gate (11/7): her pages stay inside the pre-warmed table
+
+The offline picture suite failed: the hub's own pick for four shipped lines
+("Can I have a turn?" → *turn*, "Who is coming?", "Where are we going?",
+"That sounds fun!") came from the word index outside the vocabulary table,
+and only the table is pre-warmed into the cache, so those tiles miss with
+the provider gone — which is school. Amends §6, first call: a line's picture
+is a table word or none. The hub's pick for a line is kept only when it is a
+table word; an off-table pick stores no picture (words alone), and a POST
+with an off-table word is refused as before. `symbolId` is then always the
+table's id (or null). The shipped My questions and My comments defaults pin
+their picture words in the table so no default is left without one where
+one fits ("Can I have a turn?" = my turn, "That sounds fun!" = fun, "Where
+are we going?" = go, "Who is coming?" = come here or none). Partners who
+want a picture the table lacks get the words alone; adding the concept to
+the table is the fix, and it is then pre-warmed like every other.
