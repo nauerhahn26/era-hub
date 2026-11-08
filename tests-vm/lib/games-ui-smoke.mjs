@@ -91,8 +91,8 @@ async function geometry(page) {
 export async function checkInstalledGamesUI(vm, { browser, page, expectedVersion, expectedBuild }) {
   const report = { version: 1, startedAt: new Date().toISOString(), ok: false,
     expectedVersion, expectedBuild, physicalTrackerTested: false,
-    input: 'ordinary installed Windows kiosk pointer actions',
-    talkScope: 'mocked Talk acknowledgment with the real shared button and paused game timer',
+    input: 'ordinary installed Windows kiosk pointer actions except programmatic DOM clicks in the Talk timing subcase',
+    talkScope: 'programmatic square and shared Talk button clicks in one browser task with mocked acknowledgment and a real 900 ms computer-timer observation',
     phases: [], screenshots: [], errors: [], appSelectionRestored: false };
   let originalGamesEnabled = null;
   let enabledBefore = null;
@@ -237,8 +237,17 @@ export async function checkInstalledGamesUI(vm, { browser, page, expectedVersion
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
     await ready();
     await page.locator('#barTalk').waitFor({ state: 'visible', timeout: 15000 });
-    await click('tictactoe-place', 0);
-    await page.locator('#barTalk').click();
+    // One browser task puts Talk before the real computer timer can fire.
+    // Remote protocol round trips between these two clicks would race it.
+    await page.evaluate(() => {
+      const square = document.querySelector('[data-action="tictactoe-place"][data-value="0"]');
+      const talk = document.querySelector('#barTalk');
+      if (!square || square.disabled || !talk || talk.hidden || talk.disabled) {
+        throw new Error('The normal square and shared Talk button must be available');
+      }
+      square.click();
+      talk.click();
+    });
     await park();
     await page.waitForFunction(() => GamesApp.state().paused, undefined, { timeout: 5000 });
     const paused = (await state()).tictactoe;
