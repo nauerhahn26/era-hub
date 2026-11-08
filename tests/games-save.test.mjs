@@ -81,7 +81,7 @@ async function browserPage(browser, local, { holdBody = false } = {}) {
   return { context, page };
 }
 
-test('Games state route persists validated wardrobes and both boards through hub restart', async () => {
+test('Games state route persists validated wardrobes and every game through hub restart', async () => {
   await start();
   try {
     assert.equal((await request('GET')).status, 404);
@@ -92,6 +92,9 @@ test('Games state route persists validated wardrobes and both boards through hub
     saved = reduce(saved, { type: 'lineup-add', value: saved.fashion.looks[0].id });
     saved = reduce(saved, { type: 'open', value: 'connect4' });
     saved = reduce(saved, { type: 'connect4-drop', value: 0 });
+    saved = reduce(saved, { type: 'open', value: 'tictactoe' });
+    saved = reduce(saved, { type: 'tictactoe-place', value: 0 });
+    saved = reduce(saved, { type: 'tictactoe-place', value: 4 });
     saved = reduce(saved, { type: 'open', value: 'tiles' });
     saved = reduce(saved, { type: 'tiles-move', value: 'left' });
     const raw = serializeState(saved);
@@ -108,6 +111,7 @@ test('Games state route persists validated wardrobes and both boards through hub
     assert.deepEqual(restored.fashion.lineup, expected.fashion.lineup);
     assert.deepEqual(restored.connect4, expected.connect4);
     assert.deepEqual(restored.tiles, expected.tiles);
+    assert.deepEqual(restored.tictactoe, expected.tictactoe);
   } finally { await stop(); fs.rmSync(data, { recursive: true, force: true }); }
 });
 
@@ -116,7 +120,7 @@ test('Games state route refuses malformed, oversize, foreign and corrupt writes 
   try {
     const valid = serializeState(createState());
     assert.equal((await request('PUT', valid)).status, 200);
-    for (const [body, status] of [['{', 400], [JSON.stringify({ version: 2 }), 400], ['x'.repeat(524289), 413]]) {
+    for (const [body, status] of [['{', 400], [JSON.stringify({ version: 2 }), 400], [JSON.stringify({ ...createState(), tictactoe: {} }), 400], ['x'.repeat(524289), 413]]) {
       assert.equal((await request('PUT', body)).status, status);
       assert.equal(fs.readFileSync(file, 'utf8'), valid);
     }
@@ -166,6 +170,9 @@ test('fresh browser storage and a restarted hub restore all Games progress from 
     }
     saved = reduce(saved, { type: 'open', value: 'connect4' });
     saved = reduce(saved, { type: 'connect4-drop', value: 0 });
+    saved = reduce(saved, { type: 'open', value: 'tictactoe' });
+    saved = reduce(saved, { type: 'tictactoe-place', value: 0 });
+    saved = reduce(saved, { type: 'tictactoe-place', value: 4 });
     saved = reduce(saved, { type: 'open', value: 'tiles' });
     saved = reduce(saved, { type: 'tiles-move', value: 'left' });
     await page.evaluate(value => window.GamesApp.test.setState(value), saved);
@@ -181,6 +188,7 @@ test('fresh browser storage and a restarted hub restore all Games progress from 
     assert.deepEqual(restored.fashion.lineup, saved.fashion.lineup);
     assert.deepEqual(restored.connect4, saved.connect4);
     assert.deepEqual(restored.tiles, saved.tiles);
+    assert.deepEqual(restored.tictactoe, saved.tictactoe);
     assert.equal(restored.paused, false);
     assert.equal(restored.hidden, false);
   } finally { await context?.close(); await stop(); fs.rmSync(data, { recursive: true, force: true }); }
@@ -193,13 +201,55 @@ test('valid browser progress migrates once only when durable progress is missing
     let legacy = reduce(createState(), { type: 'open', value: 'fashion' });
     legacy = reduce(legacy, { type: 'fashion-edit', value: 'color' });
     legacy = reduce(legacy, { type: 'option', value: 'plum' });
-    ({ context } = await browserPage(browser, serializeState(legacy)));
+    delete legacy.tictactoe;
+    ({ context } = await browserPage(browser, JSON.stringify(legacy)));
     await context.pages()[0].waitForFunction(() => document.querySelector('#saveNotice')?.textContent?.includes('Saved'));
-    assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).fashion.draft.color, 'plum');
+    const migrated = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.equal(migrated.fashion.draft.color, 'plum');
+    assert.deepEqual(migrated.tictactoe, createState().tictactoe);
     await context.close(); context = null;
     const replacement = reduce(createState(), { type: 'open', value: 'tiles' });
     ({ context } = await browserPage(browser, serializeState(replacement)));
     assert.equal((await context.pages()[0].evaluate(() => window.GamesApp.state())).fashion.draft.color, 'plum', 'server wins when it already exists');
+  } finally { await context?.close(); await stop(); fs.rmSync(data, { recursive: true, force: true }); }
+});
+
+test('an older durable Games save restores intact and gains tic-tac-toe on its next confirmed write', async () => {
+  let legacy = reduce(createState(), { type: 'open', value: 'fashion' });
+  legacy = reduce(legacy, { type: 'fashion-edit', value: 'color' });
+  legacy = reduce(legacy, { type: 'option', value: 'sky' });
+  legacy = reduce(legacy, { type: 'fashion-save' });
+  legacy = reduce(legacy, { type: 'lineup-add', value: legacy.fashion.looks[0].id });
+  legacy = reduce(legacy, { type: 'open', value: 'connect4' });
+  legacy = reduce(legacy, { type: 'connect4-drop', value: 2 });
+  legacy = reduce(legacy, { type: 'open', value: 'tiles' });
+  legacy = reduce(legacy, { type: 'tiles-move', value: 'left' });
+  delete legacy.tictactoe;
+  const raw = JSON.stringify(legacy);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, raw);
+  await start();
+  let context;
+  try {
+    assert.equal(await (await request('GET')).text(), raw, 'reading keeps the original durable bytes');
+    const opened = await browserPage(browser);
+    context = opened.context;
+    const page = opened.page;
+    const restored = await page.evaluate(() => window.GamesApp.state());
+    assert.deepEqual(restored.fashion, legacy.fashion);
+    assert.deepEqual(restored.connect4, legacy.connect4);
+    assert.deepEqual(restored.tiles, legacy.tiles);
+    assert.deepEqual(restored.tictactoe, createState().tictactoe);
+    await page.locator('[data-action="back"]').click();
+    await page.locator('[data-action="open"][data-value="tictactoe"]').click();
+    await page.locator('[data-action="tictactoe-place"][data-value="0"]').click();
+    assert.equal(await page.evaluate(() => window.GamesApp.test.flush()), true);
+    const upgraded = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.deepEqual(upgraded.fashion, legacy.fashion);
+    assert.deepEqual(upgraded.connect4, legacy.connect4);
+    assert.deepEqual(upgraded.tiles, legacy.tiles);
+    assert.equal(upgraded.tictactoe.board[0], 1);
+    assert.equal((await request('GET')).status, 200);
   } finally { await context?.close(); await stop(); fs.rmSync(data, { recursive: true, force: true }); }
 });
 
@@ -278,6 +328,7 @@ test('corrupt durable bytes block migration and writes but remain downloadable',
     await page.locator('.partner-button').click();
     assert.match(await page.locator('#storageNotice').textContent(), /unreadable saved Games file remains untouched/);
     assert.equal(await (await page.request.get(base + '/games/state/recovery')).text(), '{broken durable bytes');
+    await page.locator('.partner-button').click();
     await page.locator('[data-action="open"][data-value="fashion"]').click();
     assert.equal(fs.readFileSync(file, 'utf8'), '{broken durable bytes');
   } finally { await context?.close(); await stop(); fs.rmSync(data, { recursive: true, force: true }); }

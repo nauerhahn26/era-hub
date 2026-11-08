@@ -1,10 +1,11 @@
 // Local Games state. All edits are immutable; rendering, timers and storage live outside this module.
 import {createTiles,spawnTile,moveTiles,validTilesBoard,tilesCanMove} from './tiles-engine.js';
 import {createConnect4,validConnect4Board,connect4Winner,connect4Winners,dropConnect4,chooseComputerColumn} from './connect4-engine.js';
+import {createTicTacToe,validTicTacToeBoard,ticTacToeWinner,ticTacToeWinners,placeTicTacToe,chooseComputerSquare} from './tictactoe-engine.js';
 export {moveTiles,tilesCanMove,connect4Winner,chooseComputerColumn};
 export const STORAGE_KEY='era.games.v1';
 export const HISTORY_LIMIT=30;
-const TOP_VIEWS=['menu','fashion','connect4','tiles','credits'];
+const TOP_VIEWS=['menu','fashion','connect4','tiles','tictactoe','credits'];
 const FASHION_VIEWS=['studio','workbench','options','styling','collection','stage','show'];
 const POSES=['stand','wave','turn','hands'];
 const clone=value=>structuredClone(value);
@@ -30,7 +31,7 @@ const OUTFIT_FIELDS=['cut','sleeves','color','pattern','detail','detailPosition'
 const freshDraft=()=>({cut:'tshirt',sleeves:'short',color:'teal',pattern:'plain',detail:'none',detailPosition:'chest',bottoms:'trousers',shoes:'trainers',hair:'bob',model:'warm'});
 const freshShow=()=>({index:0,phase:'ready',pose:'stand',paused:false,encores:0});
 const freshFashion=()=>({view:'studio',draft:freshDraft(),looks:[],selectedLookId:null,lineup:[],stage:{venue:'studio',music:'none'},show:freshShow(),editField:null,optionPage:0,optionReturnView:'workbench',nextLookId:1,history:[]});
-export function createState(){return {version:1,view:'menu',paused:false,hidden:false,pending:null,fashion:freshFashion(),connect4:createConnect4(),tiles:createTiles()};}
+export function createState(){return {version:1,view:'menu',paused:false,hidden:false,pending:null,fashion:freshFashion(),connect4:createConnect4(),tiles:createTiles(),tictactoe:createTicTacToe()};}
 
 function outfit(raw) {
   if(!object(raw)||!OUTFIT_FIELDS.every(field=>catalogValue(field,raw[field])))throw Error('Invalid outfit');
@@ -92,6 +93,38 @@ function readConnect4(raw) {
   return {...result,history:raw.history.map(connectSnapshot)};
 }
 
+function ticTacToeSnapshot(raw) {
+  if (!object(raw) || !validTicTacToeBoard(raw.board) || !['local', 'computer'].includes(raw.mode) ||
+      ![1, 2].includes(raw.turn) || !['playing', 'won', 'draw'].includes(raw.status) ||
+      ![0, 1, 2].includes(raw.winner) || typeof raw.pendingComputer !== 'boolean') throw Error('Invalid Tic-tac-toe');
+  const board = raw.board.slice();
+  const one = board.filter(value => value === 1).length;
+  const two = board.filter(value => value === 2).length;
+  const winners = ticTacToeWinners(board), winner = winners[0] || 0;
+  if (!(one === two || one === two + 1) || winners.length > 1 ||
+      (winner === 1 && one !== two + 1) || (winner === 2 && one !== two)) throw Error('Invalid Tic-tac-toe turn count');
+  const status = winner ? 'won' : one + two === 9 ? 'draw' : 'playing';
+  const turn = status === 'playing' ? (one === two ? 1 : 2) : winner || 1;
+  const pendingComputer = raw.mode === 'computer' && status === 'playing' && turn === 2;
+  if (raw.status !== status || raw.winner !== winner || raw.turn !== turn ||
+      raw.pendingComputer !== pendingComputer) throw Error('Invalid Tic-tac-toe outcome');
+  if (winner && !board.some((value, square) => {
+    if (value !== winner) return false;
+    const previous = board.slice(); previous[square] = 0;
+    return !ticTacToeWinner(previous);
+  })) throw Error('Moves after a Tic-tac-toe win');
+  return { board, turn, mode: raw.mode, status, winner, pendingComputer };
+}
+
+function readTicTacToe(raw) {
+  const result = ticTacToeSnapshot(raw);
+  if (!Array.isArray(raw.history) || raw.history.length > 9) throw Error('Invalid Tic-tac-toe recovery');
+  const history = Array.from(raw.history, ticTacToeSnapshot);
+  if (history.some(previous => previous.status !== 'playing' || previous.mode !== result.mode ||
+      previous.pendingComputer)) throw Error('Invalid Tic-tac-toe recovery turn');
+  return { ...result, history };
+}
+
 function tilesSnapshot(raw) {
   if(!object(raw)||!validTilesBoard(raw.board)||!integer(raw.score,0,Number.MAX_SAFE_INTEGER)||
     !integer(raw.rng,0,0xffffffff)||typeof raw.won!=='boolean'||typeof raw.over!=='boolean')throw Error('Invalid Number Tiles');
@@ -109,7 +142,8 @@ function canonical(raw,{restore=false}={}) {
   if(!object(raw)||raw.version!==1||!TOP_VIEWS.includes(raw.view))throw Error('Unsupported saved Games state');
   return {version:1,view:raw.view,paused:restore?false:typeof raw.paused==='boolean'?raw.paused:false,
     hidden:restore?false:typeof raw.hidden==='boolean'?raw.hidden:false,pending:null,
-    fashion:readFashion(raw.fashion),connect4:readConnect4(raw.connect4),tiles:readTiles(raw.tiles)};
+    fashion:readFashion(raw.fashion),connect4:readConnect4(raw.connect4),tiles:readTiles(raw.tiles),
+    tictactoe:Object.hasOwn(raw,'tictactoe')?readTicTacToe(raw.tictactoe):createTicTacToe()};
 }
 
 export function readSavedState(raw) {
@@ -147,12 +181,28 @@ function playCounter(s,column,computer=false) {
     history:computer?current.history:[...current.history,snapshot(current)].slice(-42)}};
 }
 
+function playTicTacToe(s, square, computer = false) {
+  const current = s.tictactoe;
+  if (!active(s) || s.view !== 'tictactoe' || current.status !== 'playing' ||
+      (computer ? !current.pendingComputer : current.pendingComputer)) return s;
+  const board = placeTicTacToe(current.board, square, current.turn);
+  if (!board) return s;
+  const winner = ticTacToeWinner(board);
+  const status = winner ? 'won' : board.every(Boolean) ? 'draw' : 'playing';
+  const turn = status === 'playing' ? 3 - current.turn : current.turn;
+  return { ...s, tictactoe: { ...current, board, turn, status, winner,
+    pendingComputer: current.mode === 'computer' && status === 'playing' && turn === 2,
+    history: computer ? current.history : [...current.history, snapshot(current)].slice(-9) } };
+}
+
 function confirm(s) {
   const pending=s.pending;if(!pending)return s;
   const base={...s,pending:null};
   if(pending.type==='restart')return pending.game==='connect4'?{...base,connect4:createConnect4(s.connect4.mode)}:
-    pending.game==='tiles'?{...base,tiles:createTiles(s.tiles.rng)}:base;
+    pending.game==='tiles'?{...base,tiles:createTiles(s.tiles.rng)}:
+    pending.game==='tictactoe'?{...base,tictactoe:createTicTacToe(s.tictactoe.mode)}:base;
   if(pending.type==='connect4-mode')return {...base,connect4:createConnect4(pending.mode)};
+  if(pending.type==='tictactoe-mode')return {...base,tictactoe:createTicTacToe(pending.mode)};
   if(pending.type==='look-delete')return fashionChange(base,f=>{
     f.looks=f.looks.filter(look=>look.id!==pending.id);f.lineup=f.lineup.filter(id=>id!==pending.id);
     f.selectedLookId=f.looks[0]?.id||null;f.view='collection';f.show=freshShow();return f;});
@@ -181,12 +231,20 @@ export function reduce(s,action) {
     return {...s,view:'menu'};
   }
   if(type==='undo') {
-    const key=s.view==='fashion'?'fashion':s.view==='connect4'?'connect4':s.view==='tiles'?'tiles':null;
+    const key=['fashion','connect4','tiles','tictactoe'].includes(s.view)?s.view:null;
     if(!key||!s[key].history.length)return s;
     const history=s[key].history.slice(),previous=clone(history.pop());
     return {...s,[key]:{...previous,history}};
   }
-  if(type==='restart'&&['connect4','tiles'].includes(s.view))return request(s,{type:'restart',game:s.view});
+  if(type==='restart'&&['connect4','tiles','tictactoe'].includes(s.view))return request(s,{type:'restart',game:s.view});
+  if (s.view === 'tictactoe') {
+    if (type === 'tictactoe-mode' && ['local', 'computer'].includes(value) && value !== s.tictactoe.mode)
+      return s.tictactoe.board.some(Boolean) ? request(s, { type: 'tictactoe-mode', mode: value }) :
+        { ...s, tictactoe: createTicTacToe(value) };
+    if (type === 'tictactoe-place') return playTicTacToe(s, value);
+    if (type === 'tictactoe-computer') return playTicTacToe(s, chooseComputerSquare(s.tictactoe.board), true);
+    return s;
+  }
   if(s.view==='connect4') {
     if(type==='connect4-mode'&&['local','computer'].includes(value)&&value!==s.connect4.mode)
       return s.connect4.board.some(row=>row.some(Boolean))?request(s,{type:'connect4-mode',mode:value}):{...s,connect4:createConnect4(value)};

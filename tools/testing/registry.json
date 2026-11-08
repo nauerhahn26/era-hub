@@ -2865,6 +2865,7 @@
       "dependencies": [
         "era-hub/public/games/state.js",
         "era-hub/public/games/connect4-engine.js",
+        "era-hub/public/games/tictactoe-engine.js",
         "era-hub/public/games/tiles-engine.js"
       ],
       "resources": [

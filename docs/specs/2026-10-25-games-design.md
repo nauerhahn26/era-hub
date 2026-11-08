@@ -6,6 +6,11 @@ should be polished illustrated 2D. The first delivery is a local Games app,
 with adapted 2048, Four in a Row, and the first complete Fashion Studio loop.
 Publication and device delivery remain separate maintainer decisions.
 
+The [2026-11-08 tic-tac-toe extension](2026-11-08-tic-tac-toe-design.md)
+adds a fourth menu choice and a `tictactoe` workspace to version-one saves.
+Its nine square commands extend the access contract below. The earlier
+three-game delivery remains the historical scope of this record.
+
 ## Play
 
 Games opens at `/games/` and rides with the core payload. Its three large

@@ -7,6 +7,7 @@ const act = (s,type,value) => reduce(s,{type,value});
 const fashion = () => act(createState(),'open','fashion');
 const connect = () => act(createState(),'open','connect4');
 const tiles = () => act(createState(),'open','tiles');
+const tic = () => act(createState(),'open','tictactoe');
 const clone = s => structuredClone(s);
 const empty = () => Array.from({length:6},()=>Array(7).fill(0));
 const saved = (s,color) => {
@@ -128,6 +129,161 @@ test('reload cancels transient Talk/hidden/pending state without losing drafts o
   assert.throws(()=>serializeState(broken),'invalid live state must not silently become empty progress');
 });
 
+test('tic-tac-toe starts independently and rejects occupied, malformed and offscreen moves', () => {
+  let s=tic(); const before=clone(s);
+  assert.equal(s.view,'tictactoe');
+  assert.deepEqual(s.tictactoe.board,Array(9).fill(0));
+  assert.equal(s.tictactoe.mode,'local'); assert.equal(s.tictactoe.turn,1);
+  s=act(s,'tictactoe-place',4);
+  assert.equal(s.tictactoe.board[4],1); assert.equal(s.tictactoe.turn,2);
+  assert.deepEqual(before.tictactoe.board,Array(9).fill(0));
+  for(const square of [4,-1,9,1.2,'0',null,NaN])assert.equal(act(s,'tictactoe-place',square),s);
+  const menu=act(s,'back'); assert.equal(menu.view,'menu');
+  assert.equal(act(menu,'tictactoe-place',0),menu);
+  assert.deepEqual(act(menu,'open','tictactoe').tictactoe,s.tictactoe);
+  assert.deepEqual(s.fashion,before.fashion); assert.deepEqual(s.connect4,before.connect4); assert.deepEqual(s.tiles,before.tiles);
+});
+
+test('tic-tac-toe completes every winning line, stops afterward and can undo the outcome', () => {
+  const lines=[[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+  for(const line of lines) {
+    const other=Array.from({length:9},(_,i)=>i).filter(i=>!line.includes(i));
+    let s=tic();
+    for(const square of [line[0],other[0],line[1],other[1],line[2]])s=act(s,'tictactoe-place',square);
+    assert.equal(s.tictactoe.status,'won'); assert.equal(s.tictactoe.winner,1);
+    assert.equal(s.tictactoe.turn,1); assert.equal(s.tictactoe.pendingComputer,false);
+    assert.equal(act(s,'tictactoe-place',other[2]),s);
+    assert.equal(readSavedState(serializeState(s)).valid,true);
+    const undone=act(s,'undo'); assert.equal(undone.tictactoe.status,'playing');
+    assert.deepEqual(act(undone,'tictactoe-place',line[2]).tictactoe,s.tictactoe);
+  }
+  let s=tic(); for(const square of [0,3,1,4,8,5])s=act(s,'tictactoe-place',square);
+  assert.equal(s.tictactoe.status,'won'); assert.equal(s.tictactoe.winner,2); assert.equal(s.tictactoe.turn,2);
+});
+
+test('tic-tac-toe draw keeps its board, restores and permits undo', () => {
+  const moves=[0,1,2,4,3,5,7,6,8]; let s=tic();
+  for(const square of moves)s=act(s,'tictactoe-place',square);
+  assert.equal(s.tictactoe.status,'draw'); assert.equal(s.tictactoe.winner,0); assert.equal(s.tictactoe.turn,1);
+  assert.equal(act(s,'tictactoe-place',0),s);
+  assert.deepEqual(restoreState(serializeState(s)).tictactoe,s.tictactoe);
+  const undone=act(s,'undo'); assert.equal(undone.tictactoe.status,'playing');
+  assert.equal(undone.tictactoe.board[8],0); assert.equal(undone.tictactoe.turn,1);
+});
+
+test('tic-tac-toe computer wins before blocking, then uses center, corners and remaining squares', async () => {
+  const {chooseComputerSquare}=await import('../public/games/tictactoe-engine.js');
+  assert.equal(chooseComputerSquare([1,1,0,2,2,0,0,0,1]),5);
+  assert.equal(chooseComputerSquare([1,1,0,0,2,0,0,0,0]),2);
+  assert.equal(chooseComputerSquare(Array(9).fill(0)),4);
+  assert.equal(chooseComputerSquare([0,0,0,0,1,0,0,0,0]),0);
+  assert.equal(chooseComputerSquare([1,0,2,2,1,0,1,2,2]),5);
+  assert.equal(chooseComputerSquare([1,2,1,1,2,2,2,1,1]),null);
+  assert.equal(chooseComputerSquare([1,1,1,2,2,0,0,0,0]),null);
+  assert.equal(chooseComputerSquare(Array(8).fill(0)),null);
+});
+
+test('tic-tac-toe computer waits during Talk, hiding, confirmation and other games; undo reverses a round', () => {
+  let s=act(tic(),'tictactoe-mode','computer');
+  assert.equal(act(s,'tictactoe-computer'),s);
+  s=act(s,'tictactoe-place',0); assert.equal(s.tictactoe.pendingComputer,true);
+  assert.equal(act(s,'tictactoe-place',1),s);
+  for(const waiting of [act(s,'suspend',true),act(s,'hidden',true),act(s,'open','fashion'),act(s,'restart')])
+    assert.equal(act(waiting,'tictactoe-computer'),waiting);
+  assert.deepEqual(act(s,'undo').tictactoe.board,Array(9).fill(0));
+  const resumed=act(act(s,'suspend',true),'suspend',false);
+  s=act(resumed,'tictactoe-computer'); assert.equal(s.tictactoe.board[4],2);
+  assert.equal(s.tictactoe.turn,1); assert.equal(s.tictactoe.pendingComputer,false);
+  assert.equal(s.tictactoe.history.length,1);
+  assert.equal(readSavedState(serializeState(s)).valid,true);
+  s=act(s,'undo'); assert.deepEqual(s.tictactoe.board,Array(9).fill(0));
+  assert.equal(s.tictactoe.mode,'computer'); assert.equal(s.tictactoe.history.length,0);
+});
+
+test('tic-tac-toe restart and changing opponents clear the board only after confirmation', () => {
+  let s=act(tic(),'tictactoe-place',0); const board=clone(s.tictactoe.board);
+  const pending=act(s,'restart'); assert.equal(pending.pending.type,'restart');
+  assert.equal(pending.pending.game,'tictactoe'); assert.deepEqual(pending.tictactoe.board,board);
+  assert.deepEqual(act(pending,'cancel').tictactoe,s.tictactoe);
+  assert.equal(act(act(pending,'suspend',true),'confirm').pending.type,'restart');
+  s=act(pending,'confirm'); assert.deepEqual(s.tictactoe.board,Array(9).fill(0));
+  s=act(s,'tictactoe-place',0); s=act(s,'tictactoe-mode','computer');
+  assert.equal(s.pending.type,'tictactoe-mode'); assert.equal(s.tictactoe.mode,'local');
+  s=act(s,'confirm'); assert.equal(s.tictactoe.mode,'computer'); assert.deepEqual(s.tictactoe.board,Array(9).fill(0));
+  assert.equal(act(s,'tictactoe-mode','invalid'),s); assert.equal(act(s,'tictactoe-mode','computer'),s);
+});
+
+test('older Games saves gain an empty tic-tac-toe board while preserving all existing workspaces', () => {
+  let s=saved(fashion(),'coral'); s=act(s,'lineup-add',s.fashion.looks[0].id);
+  s=act(s,'open','connect4'); s=act(s,'connect4-drop',0); s=act(s,'open','tiles');
+  const old=clone(s); delete old.tictactoe;
+  const result=readSavedState(JSON.stringify(old)); assert.equal(result.valid,true);
+  assert.equal(result.state.version,1); assert.deepEqual(result.state.fashion,s.fashion);
+  assert.deepEqual(result.state.connect4,s.connect4); assert.deepEqual(result.state.tiles,s.tiles);
+  assert.deepEqual(result.state.tictactoe,tic().tictactoe);
+  let pending=act(act(tic(),'tictactoe-mode','computer'),'tictactoe-place',0);
+  pending=act(act(pending,'hidden',true),'suspend',true);
+  const round=restoreState(serializeState(pending));
+  assert.deepEqual(round.tictactoe,pending.tictactoe); assert.equal(round.hidden,false); assert.equal(round.paused,false);
+  assert.equal(act(round,'tictactoe-computer').tictactoe.board[4],2);
+});
+
+test('tic-tac-toe save validation rejects malformed present state, impossible turns, outcomes and recovery', () => {
+  const invalid=[
+    s=>s.tictactoe=null,
+    s=>s.tictactoe=undefined,
+    s=>s.tictactoe.board=Array(8).fill(0),
+    s=>s.tictactoe.board=Array(9),
+    s=>s.tictactoe.board[0]='1',
+    s=>s.tictactoe.board[0]=2,
+    s=>s.tictactoe.mode='network',
+    s=>s.tictactoe.turn=2,
+    s=>s.tictactoe.status='won',
+    s=>s.tictactoe.winner=1,
+    s=>s.tictactoe.pendingComputer=true,
+    s=>s.tictactoe.history=Array(1),
+    s=>s.tictactoe.history=Array(10).fill({}),
+    s=>s.tictactoe.history=[{...s.tictactoe,board:[1,1,1,2,2,0,0,0,0],status:'won',winner:1,turn:1}],
+    s=>s.tictactoe={...s.tictactoe,board:[1,1,1,2,2,2,0,0,0],status:'won',winner:1,turn:1},
+    s=>s.tictactoe={...s.tictactoe,board:[1,1,1,2,2,0,0,0,2],status:'won',winner:1,turn:1},
+  ];
+  for(const poison of invalid) {
+    const s=createState(); poison(s);
+    assert.equal(readSavedState(s).valid,false);
+    assert.throws(()=>serializeState(s));
+  }
+});
+
+test('tic-tac-toe save validation matches every reachable board and rejects every unreachable board', () => {
+  const lines=[[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+  const winner=board=>lines.find(line=>board[line[0]]&&line.every(square=>board[square]===board[line[0]]))?.[0];
+  const reachable=new Set();
+  function visit(board,player) {
+    const key=board.join('');
+    if(reachable.has(key))return;
+    reachable.add(key);
+    if(winner(board)!==undefined)return;
+    for(let square=0;square<9;square++)if(board[square]===0) {
+      const next=board.slice(); next[square]=player; visit(next,3-player);
+    }
+  }
+  visit(Array(9).fill(0),1);
+  assert.equal(reachable.size,5478);
+  const candidate=createState();
+  for(let encoded=0;encoded<3**9;encoded++) {
+    let digits=encoded;
+    const board=Array.from({length:9},()=>{const value=digits%3;digits=Math.floor(digits/3);return value;});
+    const one=board.filter(value=>value===1).length, two=board.filter(value=>value===2).length;
+    const winningSquare=winner(board), outcome=winningSquare===undefined?0:board[winningSquare];
+    const status=outcome?'won':board.every(Boolean)?'draw':'playing';
+    const turn=status==='playing'?(one===two?1:2):outcome||1;
+    for(const mode of ['local','computer']) {
+      candidate.tictactoe={board,turn,mode,status,winner:outcome,pendingComputer:mode==='computer'&&status==='playing'&&turn===2,history:[]};
+      assert.equal(readSavedState(candidate).valid,reachable.has(board.join('')),mode+' '+board.join(''));
+    }
+  }
+});
+
 test('connect four applies gravity and rejects unavailable columns without changing state', () => {
   let s=connect(); const before=clone(s);
   for(let i=0;i<6;i++)s=act(s,'connect4-drop',0);
@@ -233,4 +389,7 @@ test('unknown and offscreen actions are no-ops, and deep-frozen state remains us
   assert.equal(reduce(s,null),s);assert.equal(act(s,'connect4-drop',0),s);
   assert.equal(act(s,'tiles-move','left'),s); assert.equal(act(s,'show-start'),s);
   assert.equal(act(s,'open','fashion').view,'fashion');
+  const ticState=freeze(act(s,'open','tictactoe'));
+  assert.equal(act(ticState,'tictactoe-place',4).tictactoe.board[4],1);
+  assert.deepEqual(ticState.tictactoe.board,Array(9).fill(0));
 });

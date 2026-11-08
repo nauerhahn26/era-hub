@@ -79,11 +79,11 @@ async function open({width=1920,height=1080,hooks=true,motion='reduce'}={}) {
 const state=page=>page.evaluate(()=>window.GamesApp.state());
 const command=(page,name,value)=>page.locator(`[data-action="${name}"]${value===undefined?'':`[data-value="${value}"]`}`);
 
-test('Games opens three local games with shared doors and a passive preview',async()=>{
+test('Games opens four local games with shared doors and a passive fashion preview',async()=>{
   const {context,page,errors,external}=await open();
   try {
     assert.equal((await state(page)).view,'menu');
-    for(const game of ['fashion','connect4','tiles'])assert.equal(await command(page,'open',game).isVisible(),true);
+    for(const game of ['tictactoe','fashion','connect4','tiles'])assert.equal(await command(page,'open',game).isVisible(),true);
     assert.equal(await page.locator('#barDoor').isVisible(),true);
     assert.equal(await page.locator('#barTalk').isVisible(),true);
     await command(page,'open','fashion').tap();
@@ -118,8 +118,129 @@ async function look(page,name,value){
   await page.mouse.move(b.x+b.width/2,b.y+b.height/2,{steps:3});
 }
 async function saveShot(page,name){
-  if(SHOTS){fs.mkdirSync(SHOTS,{recursive:true});await page.screenshot({path:path.join(SHOTS,`games-${name}-${page.viewportSize().width}.png`)});}
+  if(SHOTS){const {width,height}=page.viewportSize();fs.mkdirSync(SHOTS,{recursive:true});await page.screenshot({path:path.join(SHOTS,`games-${name}-${width}x${height}.png`)});}
 }
+
+test('Tic-tac-toe uses nine stable square commands for a full game, undo and confirmed restart',async()=>{
+  const {context,page,errors}=await open();
+  try {
+    await click(page,'open','tictactoe');
+    assert.equal(await command(page,'tictactoe-place').count(),9);
+    await page.evaluate(()=>window.__ticSquares=[...document.querySelectorAll('[data-action="tictactoe-place"]')]);
+    for(const square of [0,3,1,4,2])await command(page,'tictactoe-place',square).tap();
+    const won=(await state(page)).tictactoe;
+    assert.equal(won.status,'won');assert.equal(won.winner,1);
+    assert.equal(await page.locator('.game-status').textContent(),'X wins');
+    assert.equal(await page.locator('.tic-square.winning').count(),3);
+    assert.equal(await command(page,'tictactoe-place').evaluateAll(nodes=>nodes.every(n=>n.disabled)),true);
+    assert.equal(await page.evaluate(()=>window.__ticSquares.every((square,i)=>square===document.querySelectorAll('[data-action="tictactoe-place"]')[i])),true);
+    await click(page,'undo');
+    assert.equal((await state(page)).tictactoe.status,'playing');
+    assert.equal((await state(page)).tictactoe.board[2],0);
+    await click(page,'restart');
+    assert.deepEqual((await state(page)).tictactoe.board,won.board.map((value,i)=>i===2?0:value));
+    await command(page,'cancel').first().click();
+    assert.equal((await state(page)).tictactoe.board.filter(Boolean).length,4);
+    await click(page,'restart');await click(page,'confirm');
+    assert.deepEqual((await state(page)).tictactoe.board,Array(9).fill(0));
+    for(const square of [0,1,2,4,3,5,7,6,8])await click(page,'tictactoe-place',square);
+    assert.equal((await state(page)).tictactoe.status,'draw');
+    assert.equal(await page.locator('.game-status').textContent(),'A draw');
+    await page.reload();await page.waitForFunction(()=>window.GamesApp?.state().ready);
+    assert.equal((await state(page)).tictactoe.status,'draw');
+    await click(page,'tictactoe-mode','computer');
+    assert.equal((await state(page)).pending.type,'tictactoe-mode');
+    await command(page,'cancel').first().click();assert.equal((await state(page)).tictactoe.mode,'local');
+    await click(page,'tictactoe-mode','computer');await click(page,'confirm');
+    assert.equal((await state(page)).tictactoe.mode,'computer');
+    assert.deepEqual((await state(page)).tictactoe.board,Array(9).fill(0));
+    assert.deepEqual(errors,[]);
+  } finally {await context.close();}
+});
+
+test('Tic-tac-toe gaze places one mark, keeps occupied targets inert and shares touch actions',async()=>{
+  const {context,page,errors}=await open();
+  try {
+    await click(page,'open','tictactoe');
+    await look(page,'tictactoe-place',0);
+    await page.waitForFunction(()=>window.GamesApp.state().tictactoe.board[0]===1,{},{timeout:2500});
+    await page.waitForTimeout(1200);
+    assert.equal((await state(page)).tictactoe.board.filter(Boolean).length,1);
+    assert.equal(await command(page,'tictactoe-place',0).isDisabled(),true);
+    assert.equal(await command(page,'tictactoe-place',0).getAttribute('aria-label'),'Top left, X');
+    await command(page,'tictactoe-place',4).tap();
+    assert.equal((await state(page)).tictactoe.board[4],2);
+    assert.deepEqual(errors,[]);
+  } finally {await context.close();}
+});
+
+test('Tic-tac-toe pauses one pending computer turn through Talk, hiding and navigation',async()=>{
+  const {context,page,errors}=await open();
+  try {
+    await click(page,'open','tictactoe');await click(page,'tictactoe-mode','computer');
+    await click(page,'tictactoe-place',0);
+    const pending=(await state(page));
+    assert.equal(pending.tictactoe.pendingComputer,true);
+    for(const reason of ['hidden','Talk']){
+      await page.evaluate(s=>window.GamesApp.test.setState(s),pending);
+      if(reason==='Talk')await page.locator('#barTalk').click();
+      await visibility(page,true);await page.waitForTimeout(750);
+      assert.deepEqual((await state(page)).tictactoe.board,pending.tictactoe.board,reason+' holds the computer');
+      await visibility(page,false);
+      await page.waitForFunction(()=>window.GamesApp.state().tictactoe.board.filter(Boolean).length===2,{},{timeout:2500});
+      await page.waitForTimeout(650);
+      assert.equal((await state(page)).tictactoe.board.filter(Boolean).length,2,reason+' resumes once');
+      await click(page,'undo');assert.deepEqual((await state(page)).tictactoe.board,Array(9).fill(0));
+    }
+    await page.evaluate(s=>window.GamesApp.test.setState(s),pending);
+    await click(page,'back');await page.waitForTimeout(750);
+    assert.deepEqual((await state(page)).tictactoe.board,pending.tictactoe.board,'menu does not run the computer');
+    await click(page,'open','tictactoe');
+    await page.waitForFunction(()=>window.GamesApp.state().tictactoe.board.filter(Boolean).length===2);
+    await click(page,'undo');assert.deepEqual((await state(page)).tictactoe.board,Array(9).fill(0));
+    assert.deepEqual(errors,[]);
+  } finally {await context.close();}
+});
+
+test('Tic-tac-toe AppLock holds a pending turn and unlock resumes it once',async()=>{
+  const {context,page}=await open();
+  try {
+    await click(page,'open','tictactoe');await click(page,'tictactoe-mode','computer');
+    await click(page,'tictactoe-place',0);
+    await page.evaluate(()=>window.AppLock.get('games').lock());
+    const board=(await state(page)).tictactoe.board;
+    await page.evaluate(()=>window.GamesApp.test.action('tictactoe-place',1));
+    await page.waitForTimeout(750);
+    assert.deepEqual((await state(page)).tictactoe.board,board);
+    assert.equal(await page.locator('#barDoor').isVisible(),true);
+    await page.evaluate(()=>window.AppLock.get('games').requestUnlock());
+    await page.waitForFunction(()=>window.GamesApp.state().tictactoe.board.filter(Boolean).length===2,{},{timeout:2500});
+    await page.waitForTimeout(650);
+    assert.equal((await state(page)).tictactoe.board.filter(Boolean).length,2);
+  } finally {await context.close();}
+});
+
+for(const [width,height] of [[1920,1080],[1280,720],[1280,800]])test(`Tic-tac-toe empty, played and winning squares fit ${width}×${height}`,async()=>{
+  const {context,page,errors}=await open({width,height});
+  try {
+    await saveShot(page,'tic-menu');
+    await click(page,'open','tictactoe');await assertLayout(page,'tic-empty');
+    for(const square of [0,3,1])await click(page,'tictactoe-place',square);
+    await assertLayout(page,'tic-midgame');
+    for(const square of [4,2])await click(page,'tictactoe-place',square);
+    await assertLayout(page,'tic-win');
+    await click(page,'tictactoe-mode','computer');await click(page,'confirm');
+    await page.evaluate(()=>{
+      window.GamesApp.test.action('tictactoe-place',0);
+      Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'hidden'});
+      Object.defineProperty(document,'hidden',{configurable:true,get:()=>true});
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    assert.equal(await page.locator('.game-status').textContent(),'Computer');
+    await assertLayout(page,'tic-computer');
+    assert.deepEqual(errors,[]);
+  } finally {await context.close();}
+});
 
 // The rig must change in the delivered browser, not merely in saved JSON.
 test('fashion choices change the passive garment preview only after selection and survive reload',async()=>{
@@ -317,6 +438,14 @@ async function assertLayout(page,label){
   }
   assert.equal(geometry.cornerAction,false,label+' rest corner activates a command');
   assert.equal(geometry.cornerColor,'rgb(0, 0, 0)',label+' rest corner is not black');
+  if(label.startsWith('tic-')){
+    const separate=await page.evaluate(()=>{
+      const status=document.querySelector('.game-status').getBoundingClientRect();
+      const saved=document.querySelector('#saveNotice').getBoundingClientRect();
+      return status.right<=saved.left||status.bottom<=saved.top||saved.bottom<=status.top;
+    });
+    assert.equal(separate,true,label+' turn or result overlaps the save notice');
+  }
   const before=await state(page);await page.mouse.click(width*.995,height*.995);
   assert.deepEqual(await state(page),before,label+' rest click changes state');
   await saveShot(page,label);
@@ -328,7 +457,7 @@ for(const [width,height] of [[1920,1080],[1280,720]])test(`all child workspaces 
     const failures=[];
     const inspect=async label=>{try{await assertLayout(page,label);}catch(error){failures.push(error.message);}};
     await inspect('menu');
-    for(const game of ['connect4','tiles']){
+    for(const game of ['tictactoe','connect4','tiles']){
       await setup(page,s=>{s.view=game;});await inspect(game);
     }
     for(const view of ['studio','workbench','styling','collection','stage','show']){

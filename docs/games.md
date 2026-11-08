@@ -4,7 +4,7 @@ Open Games from the home screen, or visit `/games/`. Games ships with the
 core installation. When a computer already has an explicit app selection,
 enable Games in Settings → Apps & navigation; that selection is preserved.
 
-Fashion Studio, Four in a Row and Number Tiles run locally without an
+Tic-tac-toe, Fashion Studio, Four in a Row and Number Tiles run locally without an
 account or subscription. Progress is saved in the hub's data folder on this
 computer, so it returns after the kiosk browser closes and reopens. The small
 status beside the Games heading says **Saved** only after the hub confirms the
@@ -18,6 +18,19 @@ unreadable, Games leaves its original bytes untouched and starts a usable
 session without writing over them. A partner can export those bytes from the
 Games partner panel. That session's new changes are not saved until the file
 is repaired.
+
+## Tic-tac-toe
+
+Choose Tic-tac-toe on the first menu. Select one of the nine large squares
+to place a mark. Empty squares are numbered 1–9 from top-left to bottom-right.
+X goes first, followed by O. Three matching marks in a row, column or diagonal
+win. A full board without a winner draws.
+
+Choose Two players to take turns with another person, or Computer to play X
+against the computer's O. Undo takes back the last turn, including the
+computer's reply. Again asks before clearing the board. Changing opponents
+after play has begun also asks first. Older saved Games progress gains an
+empty tic-tac-toe board while preserving the other games and outfits.
 
 ## Fashion Studio
 
@@ -57,7 +70,8 @@ away after a completed dwell before choosing again; holding the same gaze
 does not repeat the action. Tracking loss freezes a partial dwell.
 
 The black area at bottom-right has no action and is available for resting.
-The models, garments and game boards are previews rather than hidden targets.
+The tic-tac-toe squares are direct commands. The models, garments and the other
+game boards are previews rather than hidden targets.
 Command labels use 74-pixel text at the supported screen sizes. Passive
 headings, status, collection captions and the board's column numbers have
 a 44-pixel fit exception. Number Tiles numerals use the passive-display

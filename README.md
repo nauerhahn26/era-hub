@@ -18,7 +18,7 @@ caches — never in this repo.
   independent QA host, pinned native/app phases and owned cleanup.
 - [Math](docs/math.md) — number exploration and number partners through
   large gaze or touch controls, with optional spoken counting.
-- [Games](docs/games.md) — local Fashion Studio, Four in a Row and Number
+- [Games](docs/games.md) — local Tic-tac-toe, Fashion Studio, Four in a Row and Number
   Tiles, with large gaze or touch commands and saved progress.
 
 The optional experimental [Chat app](docs/chat.md) lives at `/chat/`. Enable it
