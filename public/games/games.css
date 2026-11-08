@@ -477,10 +477,17 @@ to {
 }
 
 
-/* Menu has three large choices, rather than shrinking their names. */
+/* Four large choices keep the familiar game names readable. */
 .menu-layout .game-workspace { grid-template-columns:1fr; }
 .menu-layout .game-preview { display:none; }
-.menu-layout .game-choices { grid-template-columns:repeat(3,minmax(0,1fr)); grid-template-rows:1fr; }
+.menu-layout .game-choices { grid-template-columns:repeat(2,minmax(0,1fr)); grid-template-rows:repeat(2,minmax(0,1fr)); }
+.tic-layout .game-workspace { grid-template-columns:minmax(0,1.4fr) minmax(0,1fr); }
+.tic-layout .game-heading { padding-right:calc(25vw + 14px); }
+.tic-board { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); grid-template-rows:repeat(3,minmax(0,1fr)); align-items:stretch; gap:14px; border:0; border-radius:0; background:transparent; overflow:visible; }
+.tic-square { padding:7px; }
+.tic-square[data-mark="X"] { color:#075F6D; }
+.tic-square[data-mark="O"] { color:#76518D; }
+.tic-square.winning { border:7px solid #075F6D; background:#E4F0E9; text-decoration:underline; text-underline-offset:8px; }
 .game-rest { pointer-events:auto; }
 .gallery-look { flex-direction:column; justify-content:flex-start; height:95%; }
 .gallery-look .character { height:calc(100% - 82px); width:100%; flex:1; min-height:0; }

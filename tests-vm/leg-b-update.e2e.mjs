@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as vm from "./lib/vm.mjs";
 import { checkInstalledChatUI, checkRestoredChatState } from "./lib/chat-ui-smoke.mjs";
+import { checkInstalledGamesUI } from "./lib/games-ui-smoke.mjs";
 
 // vm.INSTDIR is live: the previous installer may be a New ERA one, and a
 // self-update never moves the folder (only the new installer's .onInit does)
@@ -463,6 +464,16 @@ test("after the update: a button press reaches Chat through the device listener,
     try { vm.bat("sendkey-cleanup", ["schtasks /delete /tn era-qa-sendkey /f >nul 2>&1",
       `del /f /q ${GUEST_HOME}\\sendkey.exe ${GUEST_HOME}\\sendkey.cs >nul 2>&1`, "echo cleaned"], { soft: true }); } catch {}
   }
+});
+
+test("after the update: all four Games work and tic-tac-toe survives a whole kiosk restart", { timeout: 900000 }, async () => {
+  const result = await checkInstalledGamesUI(vm, { browser, page, expectedVersion: VER, expectedBuild: BUILD });
+  ({ browser, page } = result);
+  assert.equal(result.report.ok, true);
+  assert.equal(result.report.appSelectionRestored, true);
+  assert.equal(result.report.closed.allBrowserProcessesGone, true);
+  assert.equal(result.report.closed.guestCdpUnavailable, true);
+  console.log("# installed Games UI and whole-browser durability: " + JSON.stringify(result.report));
 });
 
 test("shut down: hub and kiosk stop cleanly", { timeout: 60000 }, async () => {

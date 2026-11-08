@@ -1,5 +1,6 @@
 import { mountDoorBar } from '../lib/doorbar.js';
 import { STORAGE_KEY, CATALOG, createState, readSavedState, restoreState, serializeState, reduce } from './state.js';
+import { ticTacToeWinningCells } from './tictactoe-engine.js';
 
 const screen = document.getElementById('gamesScreen');
 const origins = new WeakSet();
@@ -184,11 +185,14 @@ function scheduleMusic() {
 }
 function schedule() {
   if (!active() || S.pending) return;
-  if (S.view === 'connect4' && S.connect4.pendingComputer) {
+  if (['connect4', 'tictactoe'].includes(S.view) && S[S.view].pendingComputer && botTimer === null) {
+    const game = S.view;
     botTimer = setTimeout(() => {
       botTimer = null;
-      if (!active() || S.view !== 'connect4' || !S.connect4.pendingComputer) return;
-      S = reduce(S, { type: 'connect4-computer' }); persist(); render();
+      if (!active() || S.view !== game || !S[game].pendingComputer) return;
+      const before = S.tictactoe;
+      S = reduce(S, { type: `${game}-computer` }); persist(); render();
+      if (game === 'tictactoe') announceTicOutcome(before);
     }, 550);
   }
   if (S.view === 'fashion' && S.fashion.view === 'show') {
@@ -208,7 +212,7 @@ function schedule() {
   }
 }
 function labelLines(text) {
-  const aliases = { 'Fashion Studio': ['Fashion', 'Studio'], 'Four in a Row': ['Four in', 'a Row'], 'Number Tiles': ['Number', 'Tiles'], 'Make clothes': ['Make', 'clothes'], 'Dress a model': ['Dress', 'model'], 'Keep look': ['Keep'], 'Collection': ['Looks'], 'Model order': ['Show', 'order'], 'Two players': ['Friends'], 'No sleeves': ['No', 'sleeves'], 'Sunshine': ['Sunny'], 'Midnight': ['Night'], 'Leggings': ['Tights'], 'Shoulder': ['Side'], 'Moonlight': ['Moon'], 'Sleeveless': ['No', 'sleeves'], 'Trousers': ['Pants'], 'Train show': ['Show'] };
+  const aliases = { 'Tic-tac-toe': ['Tic-tac-toe'], 'Fashion Studio': ['Fashion', 'Studio'], 'Four in a Row': ['Four in', 'a Row'], 'Number Tiles': ['Number', 'Tiles'], 'Make clothes': ['Make', 'clothes'], 'Dress a model': ['Dress', 'model'], 'Keep look': ['Keep'], 'Collection': ['Looks'], 'Model order': ['Show', 'order'], 'Two players': ['Friends'], 'No sleeves': ['No', 'sleeves'], 'Sunshine': ['Sunny'], 'Midnight': ['Night'], 'Leggings': ['Tights'], 'Shoulder': ['Side'], 'Moonlight': ['Moon'], 'Sleeveless': ['No', 'sleeves'], 'Trousers': ['Pants'], 'Train show': ['Show'] };
   if (aliases[text]) return aliases[text];
   if (text.length > 8 && text.includes(' ')) return text.split(' ');
   return [text];
@@ -246,6 +250,7 @@ function topTitle() {
     return 'Your choice';
   }
   if (S.view === 'menu') return 'Games';
+  if (S.view === 'tictactoe') return 'Tic-tac-toe';
   if (S.view === 'connect4') return 'Four in a Row';
   if (S.view === 'tiles') return 'Number Tiles';
   if (S.view === 'credits') return 'About these games';
@@ -285,8 +290,15 @@ function renderShell() {
     footer.append(button('cancel', 'Back', undefined, 'nav'), inert(), inert());
   } else if (S.view === 'menu') {
     layout.classList.add('menu-layout'); stage.classList.add('fashion-scene', 'menu-preview');
-    addChoices([button('open', 'Fashion Studio', 'fashion'), button('open', 'Four in a Row', 'connect4'), button('open', 'Number Tiles', 'tiles')]);
+    addChoices([button('open', 'Tic-tac-toe', 'tictactoe'), button('open', 'Fashion Studio', 'fashion'), button('open', 'Four in a Row', 'connect4'), button('open', 'Number Tiles', 'tiles')]);
     footer.append(inert(), inert(), inert());
+  } else if (S.view === 'tictactoe') {
+    layout.classList.add('tic-layout'); stage.classList.add('tic-board');
+    stage.setAttribute('aria-label', 'Tic-tac-toe squares, numbered left to right, top to bottom');
+    for (let square = 0; square < 9; square++) stage.append(button('tictactoe-place', String(square + 1), square, 'tic-square'));
+    choices.classList.add('connect-modes');
+    choices.append(button('tictactoe-mode', 'Two players', 'local'), button('tictactoe-mode', 'Computer', 'computer'));
+    footerFor(button('restart', 'Again', undefined, 'primary'));
   } else if (S.view === 'connect4') {
     layout.classList.add('connect-layout');
     const columns = document.createElement('nav'); columns.className = 'column-commands'; columns.setAttribute('aria-label', 'Choose a column');
@@ -299,7 +311,7 @@ function renderShell() {
     footerFor(button('restart', 'Again', undefined, 'primary'));
   } else if (S.view === 'credits') {
     stage.classList.add('credits-text');
-    stage.innerHTML = '<h2>Number Tiles</h2><p>Adapted from 2048 by Gabriele Cirulli, under the MIT license. Movement uses four commands.</p><p><a href="vendor/2048/LICENSE.txt" target="_blank" rel="noopener">Read the original license</a></p><h2>Original local games</h2><p>Four in a Row, the character rig, garment designs and quiet show music were created for this app. Background art provenance is recorded with the artwork.</p><h2>Access</h2><p>Hosted games have separate controls. Ordinary mouse access does not prove gaze access.</p>';
+    stage.innerHTML = '<h2>Number Tiles</h2><p>Adapted from 2048 by Gabriele Cirulli, under the MIT license. Movement uses four commands.</p><p><a href="vendor/2048/LICENSE.txt" target="_blank" rel="noopener">Read the original license</a></p><h2>Original local games</h2><p>Tic-tac-toe, Four in a Row, the character rig, garment designs and quiet show music were created for this app. Background art provenance is recorded with the artwork.</p><h2>Access</h2><p>Hosted games have separate controls. Ordinary mouse access does not prove gaze access.</p>';
     footer.append(button('back', 'Back', undefined, 'nav'), inert(), inert());
   } else {
     stage.classList.add('fashion-scene'); stage.dataset.testid = 'fashion-preview';
@@ -431,6 +443,28 @@ function paintFashion() {
   }
   disabled('undo', undefined, !f.history?.length || f.view === 'show' || f.view === 'studio');
 }
+const TIC_POSITIONS = ['Top left', 'Top middle', 'Top right', 'Middle left', 'Center', 'Middle right', 'Bottom left', 'Bottom middle', 'Bottom right'];
+function announceTicOutcome(before) {
+  const current = S.tictactoe;
+  if (current.status !== before.status && current.status !== 'playing') {
+    speak(current.status === 'won' ? `${current.winner === 1 ? 'X' : 'O'} wins.` : 'A draw.');
+  }
+}
+function paintTicTacToe() {
+  const game = S.tictactoe;
+  const winning = ticTacToeWinningCells(game.board);
+  stage.querySelectorAll('.tic-square').forEach((square, index) => {
+    const mark = game.board[index] === 1 ? 'X' : game.board[index] === 2 ? 'O' : '';
+    square.querySelector('.label-line').textContent = mark || String(index + 1);
+    const label = `${TIC_POSITIONS[index]}, ${mark || `empty square ${index + 1}`}`;
+    square.setAttribute('aria-label', label); square.dataset.dwellSay = label;
+    square.dataset.mark = mark; square.classList.toggle('winning', winning.includes(index));
+    square.disabled = !!mark || game.pendingComputer || game.status !== 'playing';
+  });
+  status.textContent = game.status === 'won' ? `${game.winner === 1 ? 'X' : 'O'} wins` : game.status === 'draw' ? 'A draw' : game.pendingComputer ? 'Computer' : `${game.turn === 1 ? 'X' : 'O'} to play`;
+  screen.querySelectorAll('[data-action="tictactoe-mode"]').forEach(control => control.setAttribute('aria-pressed', String(control.dataset.value === game.mode)));
+  disabled('undo', undefined, !game.history.length);
+}
 function paintConnect() {
   const c = S.connect4;
   stage.replaceChildren();
@@ -483,6 +517,7 @@ function render(force = false) {
   if (!S.pending) {
     if (S.view === 'menu') scene(f.draft, JSON.stringify(f.draft));
     else if (S.view === 'fashion') paintFashion();
+    else if (S.view === 'tictactoe') paintTicTacToe();
     else if (S.view === 'connect4') paintConnect();
     else if (S.view === 'tiles') paintTiles();
   }
@@ -520,12 +555,13 @@ function actionFor(action, value, input = 'unknown') {
     void saved.then(ok => { if (ok && active() && revision === saveIssued) speak('Your look is kept.'); });
   }
   if (S.view === 'connect4' && S.connect4.status !== before.connect4.status && S.connect4.status !== 'playing') speak(S.connect4.status === 'won' ? `Player ${S.connect4.winner} has four in a row.` : 'A draw.');
+  if (S.view === 'tictactoe') announceTicOutcome(before.tictactoe);
   try { fetch('/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app: 'games', event: action, input, view: S.view }) }).catch(() => {}); } catch {}
 }
 function mountPartner() {
   partnerButton = document.createElement('button'); partnerButton.type = 'button'; partnerButton.className = 'partner-button'; partnerButton.textContent = 'Partner'; partnerButton.setAttribute('aria-expanded', 'false');
   partnerPanel = document.createElement('aside'); partnerPanel.className = 'partner-panel'; partnerPanel.hidden = true;
-  partnerPanel.innerHTML = '<h2>Partner setup and credits</h2><p>The three local games work offline. Hosted games use their own controls and do not inherit these HTML dwell targets. Mouse access alone does not verify gaze access.</p><p><a href="https://prod.games.eyegazegames.com/?game=connect4" target="_blank" rel="noopener">Hosted Four in a Row</a> — use its official tracker/browser setup.</p><p><a href="https://gameaccess.info/gazey-golf-eye-control-options/" target="_blank" rel="noopener">Golf control guidance</a> — the Demo is a video.</p><p><a href="https://pbskids.org/games/play/pinkalicious-fashion-game/66548" target="_blank" rel="noopener">Pinkamagine Fashion</a> — hosted clothing/design choices; independent control review required.</p>';
+  partnerPanel.innerHTML = '<h2>Partner setup and credits</h2><p>The four local games work offline. Hosted games use their own controls and do not inherit these HTML dwell targets. Mouse access alone does not verify gaze access.</p><p><a href="https://prod.games.eyegazegames.com/?game=connect4" target="_blank" rel="noopener">Hosted Four in a Row</a> — use its official tracker/browser setup.</p><p><a href="https://gameaccess.info/gazey-golf-eye-control-options/" target="_blank" rel="noopener">Golf control guidance</a> — the Demo is a video.</p><p><a href="https://pbskids.org/games/play/pinkalicious-fashion-game/66548" target="_blank" rel="noopener">Pinkamagine Fashion</a> — hosted clothing/design choices; independent control review required.</p>';
   const notice = text('', recoveryNotice); notice.id = 'storageNotice'; partnerPanel.append(notice);
   durableCopy = document.createElement('a'); durableCopy.href = '/games/state/recovery'; durableCopy.download = 'games-state-recovery.txt';
   durableCopy.textContent = 'Export unreadable saved Games file'; durableCopy.hidden = true; partnerPanel.append(durableCopy);
@@ -553,7 +589,7 @@ document.addEventListener('dwell:activate', e => { if (e.target instanceof Eleme
 bar = mountDoorBar(document.body, {
   appPath: '/games/',
   onLock() { interrupt(); musicArmed = false; persist(); syncDwell(); },
-  onUnlock() { syncDwell(); },
+  onUnlock() { syncDwell(); schedule(); },
   onLeave() { interrupt(); musicArmed = false; gone = true; persist(); syncDwell(); return flushBeforeExit(); },
   onPause() { lifecycle('suspend', true); },
   onResume() { lifecycle('suspend', false); },

@@ -408,13 +408,15 @@ computer. Usage and access behavior: [Math](math.md).
 
 ## Games
 
-Games is a core app at `/games/`, with Fashion Studio, Four in a Row and
-Number Tiles. Fashion Studio keeps editable local looks and a runway show;
-both board games use commands around passive boards.
+Games is a core app at `/games/`, with Tic-tac-toe, Fashion Studio, Four in a
+Row and Number Tiles. Tic-tac-toe uses nine direct square commands. Fashion
+Studio keeps editable local looks and a runway show. Four in a Row and Number
+Tiles use commands around passive boards.
 The partner panel contains hosted-game references and local source credits.
 Existing explicit app selections are preserved, so enable Games in Settings
-when it is absent from the home screen. State and recovery stay in the local
-browser. Usage and access behavior: [Games](games.md).
+when it is absent from the home screen. State and recovery stay in the hub's
+local data folder across browser restarts. Usage and access behavior are
+documented in [Games](games.md).
 
 ## Experimental Chat
 
