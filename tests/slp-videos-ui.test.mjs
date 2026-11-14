@@ -79,7 +79,7 @@ test('denied camera keeps library and Exit available; no recording starts automa
 });
 
 
-test('lock interrupts the live camera; Talk saves a recording before handing over',async()=>{
+test('lock interrupts the camera; Talk remains immediate while a recording saves',async()=>{
  const context=await browser.newContext({permissions:['camera','microphone']});const page=await context.newPage();
  await page.goto(base+'/slp-videos/');
  await page.getByRole('button',{name:'Partner controls',exact:true}).click();
@@ -94,9 +94,9 @@ test('lock interrupts the live camera; Talk saves a recording before handing ove
  await page.getByText('Recording Ellie',{exact:true}).waitFor();await page.waitForTimeout(1200);
  const before=(await (await page.request.get(base+'/api/slp-videos/recordings')).json()).recordings.length;
  await page.route('**/api/slp-videos/recordings',async route=>{if(route.request().method()==='POST')await new Promise(r=>setTimeout(r,2000));await route.continue();});
- const handed=page.waitForRequest(r=>r.url().endsWith('/kiosk/pause'));
+ const handed=page.waitForRequest(r=>r.url().endsWith('/kiosk/pause'),{timeout:1000});
  await page.locator('#barTalk').click();await handed;
- assert.equal((await (await page.request.get(base+'/api/slp-videos/recordings')).json()).recordings.length,before+1,'saved before handoff');
+ assert.equal((await (await page.request.get(base+'/api/slp-videos/recordings')).json()).recordings.length,before,'Talk does not wait for the delayed upload');
  await page.getByText('Recording saved on this device.',{exact:true}).waitFor();
  assert.equal(await page.locator('#mirror').evaluate(e=>e.srcObject),null);
  await context.close();
@@ -146,4 +146,16 @@ test('late camera permission after leaving releases all acquired tracks',async()
  await page.evaluate(()=>{dispatchEvent(new Event('pagehide'));window.releaseCamera();});
  await page.waitForFunction(()=>window.pendingCamera.getTracks().every(t=>t.readyState==='ended'));
  assert.equal(await page.locator('#mirror').evaluate(e=>e.srcObject),null);await context.close();
+});
+
+test('Exit retains the shared bounded wait when a recording upload stalls',async()=>{
+ const context=await browser.newContext({permissions:['camera','microphone']});const page=await context.newPage();
+ await page.goto(base+'/slp-videos/');await page.getByRole('button',{name:'Partner controls',exact:true}).click();
+ await page.getByRole('button',{name:'Start camera',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#mirror').srcObject);
+ await page.getByRole('button',{name:'Record Ellie',exact:true}).click();await page.getByText('Recording Ellie',{exact:true}).waitFor();await page.waitForTimeout(1200);
+ await page.route('**/api/slp-videos/recordings',async route=>{if(route.request().method()==='POST')await new Promise(r=>setTimeout(r,4000));await route.continue();});
+ const handed=page.waitForRequest(r=>r.url().endsWith('/kiosk/exit'),{timeout:2200});
+ await page.locator('#barDoor').click();await handed;
+ assert.equal(await page.locator('#mirror').evaluate(e=>e.srcObject),null);
+ await page.getByText('Recording saved on this device.',{exact:true}).waitFor();await context.close();
 });

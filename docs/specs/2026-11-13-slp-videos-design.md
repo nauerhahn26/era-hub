@@ -21,16 +21,18 @@ a local synced folder, refresh the library and start/stop a recording. The
 camera preview never requests a microphone; recording explicitly requests one.
 Recordings use the camera plus microphone, with echo cancellation requested,
 and are capped at five minutes or 128 MiB. The visible recording indicator is
-continuous. Saving must complete before a deliberate Exit or Talk handoff.
-Unexpected browser closure during a save can interrupt it; only a server
+continuous. Talk hands over immediately and leaves a pending save in the parked page.
+Exit keeps the shared bar's bounded 1200 ms save wait; recording must never
+block access to communication or leaving. Partners stop and save before closing.
+Closing the browser during a pending save can interrupt it; only a server
 acknowledgement means Saved. The display mirror does not reverse stored video.
 
 ## Content and account boundary
 
 The app never authenticates to Google. Drive for desktop, signed into the
 family account, synchronizes a folder shared by its owner. Sharing alone does
-not guarantee that each computer downloads a folder: select it on each device
-and mark it available offline. A configured absolute local folder is read-only.
+not guarantee that each computer downloads a folder: add a shortcut in My Drive, select it on each
+device and mark it available offline. A configured absolute local folder is read-only.
 Alternatively, the app discovers `slp-videos` immediately under the Hub's
 existing local Drive content root. No existing Drive OAuth scope is expanded.
 A folder share into an existing signed-in account does not itself restrict the

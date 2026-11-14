@@ -4,9 +4,9 @@ const model=$('model'),mirror=$('mirror');
 const API='/api/slp-videos';
 let clips=[],index=0,camera=null,microphone=null,recorder=null,savePromise=null;
 let wanted=false,paused=false,gone=false,generation=0,acquiring=false,recordStarting=false;
-let ready=false,refreshing=false,recordTimer=null,refreshTimer=null,volume=.45,handing=false,passingDoor=false;
+let ready=false,refreshing=false,recordTimer=null,refreshTimer=null,volume=.45;
 const locked=()=>window.AppLock?.isLocked()||false;
-const active=()=>!gone&&!paused&&!handing&&!locked()&&document.visibilityState==='visible';
+const active=()=>!gone&&!paused&&!locked()&&document.visibilityState==='visible';
 async function api(url,options={}) {
  const response=await fetch(API+url,{cache:'no-store',...options});
  let result;try{result=await response.json();}catch{throw Error('The hub did not finish this request.');}
@@ -122,16 +122,6 @@ const bar=mountDoorBar(document.body,{appPath:'/slp-videos/',
  onPause(){paused=true;suspend();},onResume(){paused=false;if(wanted)void startCamera();controls();},
  onLeave(){gone=true;suspend();return savePromise;},
  onLock(){suspend();},onUnlock(){controls();if(wanted)void startCamera();}});
-// A recording save can outlast the shared bar's short generic leave deadline.
-// Finish it before dispatching either door's normal handoff.
-for(const button of [bar.doorBtn,bar.talkBtn])button.addEventListener('click',async event=>{
- if(passingDoor||(!recorder&&!savePromise&&!recordStarting))return;
- event.preventDefault();event.stopImmediatePropagation();
- if(handing)return;handing=true;model.pause();stopCamera(false);controls();
- try{await savePromise;}finally{
-  handing=false;passingDoor=true;button.click();passingDoor=false;controls();
- }
-},true);
 $('partnerToggle').onclick=()=>{const open=$('partner').hidden;$('partner').hidden=!open;$('partnerToggle').setAttribute('aria-expanded',String(open));if(open){void cameraOptions();void loadRecordings();}};
 $('camera').onclick=()=>camera?stopCamera():void startCamera();
 $('cameraSelect').onchange=()=>{const restart=!!camera;stopCamera(false);if(restart)void startCamera();};
