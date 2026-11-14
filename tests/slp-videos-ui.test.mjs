@@ -17,7 +17,7 @@ before(async()=>{
   server=http.createServer((req,res)=>{
     if(api.handle(req,res))return;
     const p=new URL(req.url,'http://fixture.invalid').pathname;
-    if(p==='/settings'){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({dwellMs:900,musicVolCap:50,pauseGoes:'tdsnap'}));return;}
+    if(p==='/settings'){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({dwellMs:900,settleMs:600,musicVolCap:50,pauseGoes:'tdsnap'}));return;}
     if(p.startsWith('/kiosk/')){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({action:p.endsWith('pause')?'paused':'closed'}));return;}
     let file=path.join(PUBLIC,p);
     if(p.endsWith('/'))file=path.join(file,'index.html');
@@ -35,6 +35,8 @@ test('side by side layout, real camera mirror, explicit local recording and clea
  const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto(base+'/slp-videos/');
  await page.getByText('No practice videos yet.').waitFor();
+ assert.equal(await page.evaluate(()=>window.Dwell.config.settleMs),600);
+ assert.equal(await page.locator('#model').evaluate(e=>e.volume),.5);
  await page.getByRole('button',{name:'Partner controls',exact:true}).click();
  await page.locator('#importFiles').setInputFiles({name:'Practice.mp4',mimeType:'video/mp4',buffer:Buffer.from('synthetic media')});
  await page.getByRole('button',{name:'Practice',exact:true}).waitFor();
@@ -46,6 +48,8 @@ test('side by side layout, real camera mirror, explicit local recording and clea
  assert.ok(partner.x+partner.width<=lock.x,'Partner controls leave the shared lock unobscured');
  const left=await page.locator('#modelPanel').boundingBox(),right=await page.locator('#mirrorPanel').boundingBox();
  assert.ok(left.x+left.width<=right.x+2);assert.ok(Math.abs(left.width-right.width)<3);
+ assert.ok(await page.locator('#play').evaluate(e=>parseFloat(getComputedStyle(e).fontSize)>=44),'video commands meet the shared minimum text size');
+ assert.ok(await page.locator('.commands').evaluate(e=>parseFloat(getComputedStyle(e).columnGap)>=14),'command gaps meet the shared minimum');
  await page.getByRole('button',{name:'Record Ellie',exact:true}).click();
  await page.getByText('Recording Ellie', {exact:true}).waitFor();
  await page.waitForTimeout(1400);

@@ -151,8 +151,9 @@ $('importFiles').onchange=async()=>{
  catch(e){$('sourceStatus').textContent=e.message;}finally{$('importFiles').disabled=false;$('importFiles').value='';}
 };
 fetch('/settings').then(r=>r.json()).then(s=>{
- if(Number.isFinite(s.dwellMs)){window.Dwell?.setMs(s.dwellMs);bar.setDwell(s.dwellMs);}
+ if(Number.isFinite(s.dwellMs)&&s.dwellMs>0){window.Dwell?.setMs(s.dwellMs);bar.setDwell(s.dwellMs);}
  if(Number.isFinite(s.musicVolCap))volume=Math.max(0,Math.min(1,s.musicVolCap/100));
+ if(Number.isFinite(s.settleMs))window.Dwell?.set({settleMs:Math.max(0,Math.min(2000,s.settleMs))});
  model.volume=volume;bar.setPause(s.pauseGoes==='tdsnap');
 }).catch(()=>{}).finally(()=>{ready=true;void refresh();});
 document.addEventListener('visibilitychange',()=>{

@@ -9,6 +9,8 @@ no scores, speech recognition or requirements to imitate a sound.
 
 The shared Exit and Talk bar keeps its positions and doubled dwell. The four
 video commands use the shared dwell engine, move-to-rearm and Settings timing.
+Command labels follow the existing player: 44 px minimum, 74 px cap and
+responsive sizing between them, with at least 14 px gaps.
 The app has an independent app lock. Locking, Talk, leaving and hiding pause the
 model, stop the camera and finish any recording. Returning may restore a camera
 that the partner had enabled, but never automatically resumes recording or the
