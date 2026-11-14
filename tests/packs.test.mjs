@@ -98,6 +98,8 @@ test("Core app modules are copied before the payload dependency check and their 
   const begin = PAYLOAD.indexOf('\ncp ') + 1;
   const vendor = PAYLOAD.indexOf('cp -r "$HUB/vendor" "$OUT/vendor"');
   const validation = PAYLOAD.indexOf('workers=');
+  const entrypoint = PAYLOAD.indexOf('cp "$HUB/server.js"');
+  assert.ok(begin > 0 && entrypoint >= begin && entrypoint < validation, 'the copied core block includes the hub entrypoint');
   for (const file of ['chat-api.js', 'chat-choices.js', 'chat-symbols.js', 'chat-speech-worker.js', 'slp-videos.js']) {
     const copy = PAYLOAD.indexOf(`"$HUB/${file}"`);
     assert.ok(copy >= begin && copy < validation, `${file} is present before required-module validation`);

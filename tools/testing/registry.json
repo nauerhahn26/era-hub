@@ -3724,11 +3724,10 @@
       ],
       "lane": "linux",
       "resources": [
-        "own-hub",
         "temporary-data"
       ],
       "level": "build/static contract and local behavior",
-      "hub": "own",
+      "hub": "none",
       "ports": [],
       "browsers": 0,
       "heavy": false,
