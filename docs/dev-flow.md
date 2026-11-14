@@ -441,3 +441,10 @@ the engine reappears by hand, or eight hours pass; the marker survives a hub
 restart. Turning the engine off in the apps list is simply unsupervised. The
 engine side (era-gaze `StartBus()`) retries a failed bus bind instead of running
 deaf. Design: [gaze engine supervisor](specs/2026-10-26-gaze-engine-supervisor-design.md).
+
+## Speech Mirror
+
+Speech Mirror is a core app at `/slp-videos/`. It reads local or already-synced
+practice clips beside a live camera mirror; optional recordings stay in local
+Hub data and outside Drive sync. Existing explicit app selections are preserved.
+Setup and device acceptance: [Speech Mirror](slp-videos.md).
