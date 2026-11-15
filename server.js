@@ -83,6 +83,7 @@ const chatWorld = require("./chat-world.js").createWorld({ dataDir: DATA,
   likes: () => chatLikes(DATA) });
 const LOGS = path.join(DATA, "logs");
 const TTS_CACHE = path.join(DATA, "tts-cache");
+const slpVideos = require("./slp-videos.js").createSlpVideos({ dataDir: DATA, localFolder: () => drive.localFolder(), serveMedia: serveMediaJail });
 const GAMES_STATE = path.join(DATA, "games", "state.json");
 const GAMES_STATE_LIMIT = 524288;
 fs.mkdirSync(LOGS, { recursive: true });
@@ -178,6 +179,7 @@ const APPS = [
   // copies public/drawing; no installer /x, no pack), so it is never "installing" and never removable.
   { id: "drawing", title: "Drawing", sub: "make a picture with stickers", path: "/drawing/", pack: null },
   { id: "math", title: "Math", sub: "explore numbers and number partners", path: "/math/", pack: null },
+  { id: "slp-videos", title: "Speech Mirror", sub: "practice videos and a live mirror", path: "/slp-videos/", pack: null },
   { id: "games", title: "Games", sub: "tic-tac-toe, fashion and number games", path: "/games/", pack: null },
   // The Chat page is core; its speech activity runtime comes from the board pack.
   { id: "chat", title: "Chat", sub: "experimental conversation · hold to ask", path: "/chat/", pack: "board", defaultEnabled: false },
@@ -1581,7 +1583,7 @@ function streamTts(cfg, text, res, role = "her") {
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
                ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml",
                ".woff2": "font/woff2", ".mp3": "audio/mpeg",
-               ".mp4": "video/mp4", ".wav": "audio/wav",
+               ".mov": "video/quicktime", ".m4v": "video/mp4", ".mp4": "video/mp4", ".wav": "audio/wav",
                ".m4a": "audio/mp4", ".webm": "audio/webm", ".opus": "audio/ogg",
                ".webp": "image/webp",
                ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -1972,6 +1974,7 @@ function stampInteraction(req) {
 
 const server = http.createServer((req, res) => {
   stampInteraction(req);
+  if (slpVideos.handle(req, res)) return;
   if (chatStore.handle(req, res)) return;
   if (chatTurns.handle(req, res)) return;
   if (chatApi.handle(req, res)) return;

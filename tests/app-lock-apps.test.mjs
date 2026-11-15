@@ -15,7 +15,7 @@ before(async () => {
       if (req.method === 'POST') { let body = ''; req.on('data', chunk => { body += chunk; }); req.on('end', () => { const update = JSON.parse(body); if (typeof update.lockPasscodeHash === 'string') passcodeHash = update.lockPasscodeHash; respond(); }); }
       else respond(); return;
     }
-    if (p === '/apps') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ apps: ['making-words','pencil','board','music','movies','this-week','reader','drawing','math','games','chat'].map(id => ({ id, installed: true, enabled: true })) })); return; }
+    if (p === '/apps') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ apps: ['making-words','pencil','board','music','movies','this-week','reader','drawing','math','games','chat','slp-videos'].map(id => ({ id, installed: true, enabled: true })) })); return; }
     if (p === '/log') { res.writeHead(204).end(); return; }
     if (p.startsWith('/lib/') || /\.(js|css|svg|png)$/.test(p) || p.endsWith('/') || p === '/index.html') {
       let target = path.resolve(PUBLIC, '.' + p);
@@ -64,7 +64,7 @@ test('Settings offers independent app controls and does not lock anything on loa
   const context = await browser.newContext();
   try {
     const page = await context.newPage(); await page.goto(base + '/settings/#apps');
-    await page.waitForFunction(() => document.querySelectorAll('[data-app-lock-id]').length === 11);
+    await page.waitForFunction(() => document.querySelectorAll('[data-app-lock-id]').length === 12);
     assert.deepEqual(await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('era.app-lock.v1.'))), []);
     await page.locator('[data-app-lock-id="music"] button').click();
     await page.waitForFunction(() => !!localStorage.getItem('era.app-lock.v1.music'));
@@ -78,7 +78,7 @@ test('saving a passcode refreshes its offline hash immediately', async () => {
   const context = await browser.newContext();
   try {
     const page = await context.newPage(); await page.goto(base + '/settings/#apps');
-    await page.waitForFunction(() => document.querySelectorAll('[data-app-lock-id]').length === 11);
+    await page.waitForFunction(() => document.querySelectorAll('[data-app-lock-id]').length === 12);
     await page.locator('#lockPass').fill('2468');
     const saved = page.waitForResponse(response => response.url().endsWith('/settings') && response.request().method() === 'POST');
     await page.locator('#lockPassSave').click(); await saved;

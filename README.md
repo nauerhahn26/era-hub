@@ -39,3 +39,6 @@ License: MPL-2.0.
 
 - [Individual app locks](docs/app-locks.md) — independent locks with shared adult
   controls and passcode handling.
+
+- [Speech Mirror](docs/slp-videos.md) — practice videos beside a live camera mirror,
+  with optional recordings saved only on this device.

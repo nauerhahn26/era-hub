@@ -94,23 +94,27 @@ test("build-payload refuses to cut a payload with a piece of the cut-out engine 
   } finally { fs.rmSync(out, { recursive: true, force: true }); }
 });
 
-test("Chat modules are copied before the payload dependency check and its page stays core", () => {
-  const begin = PAYLOAD.indexOf('cp "$HUB/server.js"');
+test("Core app modules are copied before the payload dependency check and their pages stay core", () => {
+  const begin = PAYLOAD.indexOf('\ncp ') + 1;
   const vendor = PAYLOAD.indexOf('cp -r "$HUB/vendor" "$OUT/vendor"');
   const validation = PAYLOAD.indexOf('workers=');
-  for (const file of ['chat-api.js', 'chat-choices.js', 'chat-symbols.js', 'chat-speech-worker.js']) {
+  const entrypoint = PAYLOAD.indexOf('cp "$HUB/server.js"');
+  assert.ok(begin > 0 && entrypoint >= begin && entrypoint < validation, 'the copied core block includes the hub entrypoint');
+  for (const file of ['chat-api.js', 'chat-choices.js', 'chat-symbols.js', 'chat-speech-worker.js', 'slp-videos.js']) {
     const copy = PAYLOAD.indexOf(`"$HUB/${file}"`);
     assert.ok(copy >= begin && copy < validation, `${file} is present before required-module validation`);
   }
   assert.ok(PAYLOAD.includes('cp -r "$HUB/public/chat" "$OUT/public/chat"'));
   assert.ok(!/\/x chat\b/.test(NSI), 'Chat page rides with the core');
+  assert.ok(PAYLOAD.includes('cp -r "$HUB/public/slp-videos" "$OUT/public/slp-videos"'));
+  assert.ok(!/\/x slp-videos\b/.test(NSI), 'Speech Mirror rides with the core');
   const out = fs.mkdtempSync(path.join(os.tmpdir(), 'era-chat-modules-'));
   try {
     const run = spawnSync('bash', ['-eu', '-c', PAYLOAD.slice(begin, vendor)], {
       env: { ...process.env, HUB: path.resolve(new URL('..', import.meta.url).pathname), OUT: out }, encoding: 'utf8',
     });
     assert.equal(run.status, 0, run.stdout + run.stderr);
-    for (const file of ['chat-api.js', 'chat-choices.js', 'chat-symbols.js', 'chat-speech-worker.js']) assert.ok(fs.statSync(path.join(out, file)).size > 0);
+    for (const file of ['chat-api.js', 'chat-choices.js', 'chat-symbols.js', 'chat-speech-worker.js', 'slp-videos.js']) assert.ok(fs.statSync(path.join(out, file)).size > 0);
   } finally { fs.rmSync(out, { recursive: true, force: true }); }
 });
 

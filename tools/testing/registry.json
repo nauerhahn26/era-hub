@@ -3724,11 +3724,10 @@
       ],
       "lane": "linux",
       "resources": [
-        "own-hub",
         "temporary-data"
       ],
       "level": "build/static contract and local behavior",
-      "hub": "own",
+      "hub": "none",
       "ports": [],
       "browsers": 0,
       "heavy": false,
@@ -5119,6 +5118,51 @@
       "hub": "own",
       "ports": [],
       "browsers": 2,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/slp-videos-ui.test.mjs",
+      "purpose": "Live camera, local recording, permission recovery and split layout",
+      "group": "slp-videos",
+      "dependencies": [
+        "era-hub/**",
+        "era-core/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "browser",
+        "temporary-data"
+      ],
+      "level": "browser integration",
+      "hub": "none",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
+      "id": "era-hub:tests/slp-videos.test.mjs",
+      "purpose": "Local media, shared-folder refresh, recording storage and request boundaries",
+      "group": "slp-videos",
+      "dependencies": [
+        "era-hub/**",
+        "era-core/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "temporary-data"
+      ],
+      "level": "module integration",
+      "hub": "none",
+      "ports": [],
+      "browsers": 0,
       "heavy": false,
       "solo": false,
       "quiet": false,

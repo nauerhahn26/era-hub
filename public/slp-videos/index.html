@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Speech Mirror</title>
+<link rel="stylesheet" href="../lib/tokens.css"><link rel="stylesheet" href="../lib/doorbar.css"><link rel="stylesheet" href="slp-videos.css">
+<script>window.DwellConfig={ms:1200,graceMs:400,decayMs:1000,padPx:16,rearmPx:48,staleMs:600,settleMs:250,audioPreview:false,chime:false,bus:'auto',color:'#0F7C8A'};</script>
+</head>
+<body>
+<button id="partnerToggle" aria-expanded="false" aria-controls="partner">Partner controls</button>
+<main>
+<section class="panels" aria-label="Speech practice">
+ <div id="modelPanel" class="panel"><h1 id="clipTitle">Speech Mirror</h1><video id="model" playsinline preload="metadata"></video><p id="videoStatus" role="status">Loading practice videos…</p></div>
+ <div id="mirrorPanel" class="panel"><h2>You</h2><video id="mirror" playsinline muted autoplay></video><p id="cameraStatus" role="status">Start the camera in Partner controls to see yourself.</p><strong id="recordingBadge" hidden>Recording</strong></div>
+</section>
+<nav class="commands" aria-label="Video controls">
+<button id="previous" class="dwell" data-dwell-say="Previous video">Previous</button>
+<button id="play" class="dwell" data-dwell-say="Play">Play</button>
+<button id="replay" class="dwell" data-dwell-say="Replay">Replay</button>
+<button id="next" class="dwell" data-dwell-say="Next video">Next</button>
+</nav>
+</main>
+<aside id="partner" hidden aria-label="Partner controls">
+ <h2>Partner controls</h2>
+ <p>Watch and try sounds together. The camera is a live mirror. Recording starts only when you choose Record Ellie.</p>
+ <div class="partnerRow"><button id="camera">Start camera</button><label>Camera <select id="cameraSelect"><option value="">Default front camera</option></select></label><button id="record" disabled>Record Ellie</button><button id="stopRecord" disabled>Stop and save</button></div>
+ <p id="recordStatus" role="status">Recordings stay on this device. Stop and save before leaving. Maximum five minutes per recording.</p>
+ <h3>Practice videos</h3><p id="sourceStatus" role="status"></p><div id="library"></div>
+ <div class="partnerRow"><button id="refresh">Refresh videos</button><label>Import local videos <input id="importFiles" type="file" accept="video/mp4,video/webm,video/quicktime,.mov,.m4v" multiple></label></div>
+ <form id="folderForm"><label>Synced video folder on this device <input id="folder" placeholder="Leave blank to use shared content or local imports"></label><button>Use folder</button></form>
+ <p>Use a folder already synced by Google Drive and mark it available offline. The app needs no Google sign-in. MP4 (H.264) is recommended; some MOV videos need conversion.</p>
+ <h3>Saved on this device</h3><div id="recordings"></div>
+</aside>
+<script src="../dwell.js"></script><script type="module" src="slp-videos.js"></script>
+</body></html>
