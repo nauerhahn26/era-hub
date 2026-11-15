@@ -2,7 +2,7 @@
 
 Design: [Speech Mirror](../specs/2026-11-13-slp-videos-design.md).
 The maintainer authorized building the separate app, local recordings and
-folder-based video access. Publication has not been authorized.
+folder-based video access. The maintainer subsequently authorized release.
 
 Worktrees: Hub and Core `--wt-slp-videos`, branch `feat/slp-videos` in each.
 The existing `youtube-videos` and `video-generation` siblings overlap in media
@@ -64,3 +64,13 @@ clips. The app reads local files and holds no new Google credentials.
 Remaining acceptance is on the actual device: front camera, microphone/browser
 permissions, captured sound and coexistence with gaze. No Windows installer VM
 run, device installation, merge or public release was performed or authorized.
+
+
+## Release authorization
+
+The maintainer requested publication on 2026-11-15. Target is v1.1.4, a patch
+following published v1.1.3 and retaining the signed v1.1.0 installer. Refresh
+Hub/Core stamps, land in dependency order, then run the canonical patch build,
+Windows leg B and publication. The host's live Hub is not restarted by tools.
+The source folder share and physical camera/gaze acceptance remain separate
+setup steps; private practice media and recordings are not release assets.
