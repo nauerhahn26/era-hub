@@ -61,9 +61,9 @@ folder available offline. No source-folder permissions were changed here.
 New phone MOV clips may need the same portable MP4 preparation as the initial
 clips. The app reads local files and holds no new Google credentials.
 
-Remaining acceptance is on the actual device: front camera, microphone/browser
-permissions, captured sound and coexistence with gaze. No Windows installer VM
-run, device installation, merge or public release was performed or authorized.
+At implementation handoff, physical-device acceptance remained: front camera,
+microphone/browser permissions, captured sound and coexistence with gaze.
+Publication was subsequently authorized and completed as recorded below.
 
 
 ## Release authorization
@@ -74,3 +74,30 @@ Hub/Core stamps, land in dependency order, then run the canonical patch build,
 Windows leg B and publication. The host's live Hub is not restarted by tools.
 The source folder share and physical camera/gaze acceptance remain separate
 setup steps; private practice media and recordings are not release assets.
+
+
+## Published v1.1.4
+
+Published: https://github.com/nauerhahn26/new-era-releases/releases/tag/v1.1.4
+
+Core landed as `a78da01` and Hub as `578bdc5`, both pushed to master through
+the worktree landing tool. The release tag names `5d2cb5e`; the master merge
+has the same content. Gate stamps were refreshed from the recorded evidence:
+210 passed, 0 failed, receipt `2026-11-15T19-55-29Z-52d79bf`.
+
+The canonical patch pipeline built version v1.1.4, build `20261115.1956`,
+verified and retained the signed v1.1.0 installer, and ran Windows leg B with
+the quiet profile: **14 passed, 0 failed**. `VM-GREEN` names the exact tarball
+published below. All six release assets are present, and the temporary QA host
+was destroyed when the release finished.
+
+Tarball SHA-256:
+`03e8916222c307b220ceecdf3ba62fa4e023a990e13041e405f5b0523a0840a8`.
+The public latest.json identifies v1.1.4 and this checksum. Downloading the
+public stable updater tarball reproduced the same SHA. Feature-specific release
+notes were published and read back successfully.
+
+Existing installs can receive the patch through the normal updater. Enable
+Speech Mirror in Apps & navigation, then configure/import practice videos.
+Physical camera/gaze acceptance and the source-owner folder share remain setup
+steps. No direct device push or restart of the host's live Hub was performed.
