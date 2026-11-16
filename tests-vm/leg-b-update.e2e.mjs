@@ -521,13 +521,24 @@ test('Speech Mirror: local setup survives a whole Edge kiosk restart and request
     canvas.getContext('2d').fillRect(0,0,320,240);window.testCameraCanvas=canvas;
     navigator.mediaDevices.getUserMedia=async constraints=>{
       if(constraints.audio!==false)throw new Error('Unexpected microphone request');
-      return canvas.captureStream(15);
+      const stream=canvas.captureStream(15);
+      // Edge needs a frame drawn after capture starts before video.play()
+      // can resolve. Keep the synthetic camera delivering frames until close.
+      let frame=0;
+      window.testCameraTimer=setInterval(()=>{
+        const paint=canvas.getContext('2d');paint.fillStyle=frame++%2?'#203040':'#405060';paint.fillRect(0,0,320,240);
+      },100);
+      return stream;
     };
     localStorage.setItem('camera-session-canary','configured');
   });
   await page.getByRole('button',{name:'Partner controls',exact:true}).click();
   await page.getByRole('button',{name:'Start camera',exact:true}).click();
-  await page.getByText('Live mirror · camera only',{exact:true}).waitFor();
+  await page.getByText('Live mirror · camera only',{exact:true}).waitFor().catch(async error=>{
+    console.log('# canvas camera: '+JSON.stringify(await page.evaluate(()=>({status:document.querySelector('#cameraStatus').textContent,
+      streamActive:document.querySelector('#mirror').srcObject?.active,readyState:document.querySelector('#mirror').readyState}))));
+    throw error;
+  });
   const saved=await vm.api(page,'/api/slp-videos/camera');
   assert.equal(saved.json.enabled,true);
   await freshInstalledApp('/slp-videos/');
