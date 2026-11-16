@@ -19,6 +19,11 @@ Stop camera opts out of automatic preview until the partner starts it again.
 Lifecycle suspension preserves the preference but releases tracks. A late
 permission grant after leaving must release its tracks without saving a new
 successful configuration. Recording continues to require an explicit action.
+If a pending camera request is cancelled by hiding, locking or Talk and the
+app returns before that request finishes, release the stale stream and start
+the still-wanted preview again. Genuine camera failures stop with recovery
+instructions; they never create a retry loop. This covers native launch
+settling's brief minimize/restore transition.
 
 Previous, Play/Pause, Replay and Next have large monochrome SVG symbols plus
 readable labels and accessible action names. Playback events control the
