@@ -14,9 +14,10 @@ siblings may touch shared launch behavior. Their worktrees remain untouched.
 - [x] Establish red tests for per-launch settling and owned-job cancellation.
 - [x] Notify the shared native settle after every fresh kiosk launch.
 - [x] Add Windows coverage checks before any pointer/touch activation.
-- [ ] Run focused tests and the full detached gate; record the verdict.
-- [ ] Land, run patch-release Windows acceptance and publish the tested bytes.
-- [ ] Update the home device and verify the delivered version and app behavior.
+- [x] Run focused tests and the full detached gate; record the verdict.
+- [x] Land, run patch-release Windows acceptance and publish the tested bytes.
+- [x] Update the home device and verify the delivered version, assets and library.
+- [ ] Finish the home device's native bottom-edge probe when it is online again.
 
 Initial evidence: fresh batch launches request kiosk mode but never notify the
 existing settle helper; settling at first install is protected by a one-time
@@ -60,3 +61,42 @@ but prevented the wanted preview from restarting. A red browser test pins that
 transition. After releasing a stale grant, the camera now retries only when
 the visible, unlocked app still wants it. Real failures never loop. All 56
 focused tests pass, including late-grant cleanup, hide/restore and denial.
+
+## Published and delivered v1.1.5
+
+Published: https://github.com/nauerhahn26/new-era-releases/releases/tag/v1.1.5
+
+Version `v1.1.5`, build `20261116.0216`, source tag
+`e74e23d146a3d2d576dfdf08d0b2ca9305ca2fe4`, source tree
+`782600b98b0944331b599b7386fe8c3f9e069249`.
+Final gate: **210 passed, 0 failed, all fresh**, receipt
+`2026-11-16T01-56-48Z-782600b`. Focused verification: **56 passed**.
+The canonical patch pipeline passed **16 Windows checks, 0 failures**, using
+the quiet guest profile and the verified signed installer from v1.1.0.
+
+All 14 installed app routes, Home and Settings included, filled the native
+1280×800 display and owned focus, the center and all three bottom-edge points
+before any click. Camera setup survived a complete Edge restart, with a new
+InPrivate storage session and an automatic camera request. This is a request
+and persistence check; the QA VM has no physical camera.
+
+The public latest feed and downloaded stable tarball match the tested archive:
+
+```
+23b54aa1210cf6754aba6ece8f5079155b52ae7da89a39fe825e913533d81469
+```
+
+The home device updated through the normal updater from `20261115.1956` to
+`20261116.0216`. Running and disk builds match. Its served HTML, JavaScript and
+CSS hashes match the release payload; the shared folder remains available with
+both practice videos. The installed batch launcher then opened Speech Mirror
+successfully (completed, result 0), without an agent pointer/touch action. The
+device went offline before the final native window measurement, so that
+measurement remains pending. The old version had no saved camera choice; start
+and select the camera once on this version to save its setup. Physical camera
+image quality and gaze accuracy require confirmation on the device.
+
+All release QA hosts were destroyed by the runner's cleanup. No live host hub
+was restarted. Future checks should review camera lifecycle alongside native
+minimize/restore, give synthetic canvas cameras continuous frames, and run the
+Linux gate and Windows legs serially in one worktree because both own `gate/`.

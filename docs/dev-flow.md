@@ -178,6 +178,10 @@ watching a gate.
 
 ## The three release shapes
 
+Run the full Linux gate and Windows VM legs serially within one worktree. Both
+recreate `gate/`; overlapping them deletes the other run's logs and fixtures.
+The canonical release script already runs these stages in order.
+
 A dist lives at `~/new-era/dist/release-<V>/` (sibling of the
 checkout) — that is also where a `--dry-run` leaves its artefacts.
 
