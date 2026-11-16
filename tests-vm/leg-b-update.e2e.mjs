@@ -30,6 +30,20 @@ let prevHasPacksLaw = false;
 const FEED = `http://127.0.0.1:${process.env.VM_FEED_PORT || 8427}`;
 const feed = (what) => vm.host(`curl -s -X POST ${FEED}/${what}`);
 
+async function freshInstalledApp(route) {
+  const session=await browser.newBrowserCDPSession();
+  await session.send('Browser.close').catch(error=>{if(!/closed|disconnected|terminated/i.test(error.message))throw error;});
+  browser=null;page=null;
+  await vm.waitFor(()=>{
+    const cdp=vm.guest('curl.exe -sf --max-time 2 http://127.0.0.1:9222/json/version',{soft:true,timeout:10000});
+    return !cdp&&{closed:true};
+  },{timeout:60000,every:1000,what:'the previous guest browser CDP listener to close'});
+  vm.interactive('fresh-app', ['set ERA_QA_CDP=9222', `call "${vm.INSTDIR}\\start-hub.bat" 8377 "${route}"`]);
+  ({ browser, page } = await vm.kiosk());
+  const target = new URL(route, vm.HUB_URL);
+  await page.waitForURL(url => url.pathname === target.pathname && url.search === target.search, { timeout: 120000 });
+}
+
 test("VM: pristine snapshot, PREVIOUS release installed silently", { timeout: 1200000 }, async () => {   // 493 s, then >600 s, on the starved 9/6 host
   // the family downloaded the newest release there was: nothing newer sits
   // on the feed while they answer the wizard. Held, /latest.json answers 503
@@ -484,11 +498,7 @@ test("fresh launches: every installed app covers the Windows taskbar without a t
   for (const route of routes) {
     // Use the installed shortcut target, including its real settle notification.
     // No page click, bringToFront or synthetic pointer activation is allowed.
-    try { await browser?.close(); } catch {}
-    vm.interactive('fresh-app', ['set ERA_QA_CDP=9222', `call "${vm.INSTDIR}\\start-hub.bat" 8377 "${route}"`]);
-    ({ browser, page } = await vm.kiosk());
-    const target = new URL(route, vm.HUB_URL);
-    await page.waitForURL(url => url.pathname === target.pathname && url.search === target.search, { timeout: 120000 });
+    await freshInstalledApp(route);
     const native = await vm.waitFor(async () => {
       const state = await vm.windows();
       return vm.browserCoversDesktop(state) && state;
@@ -500,6 +510,32 @@ test("fresh launches: every installed app covers the Windows taskbar without a t
   }
   fs.writeFileSync(path.join(vm.OUT, 'fresh-launch-coverage.json'), JSON.stringify(report, null, 2));
   console.log('# fresh launches covered at center and all three bottom-edge points: ' + routes.join(', '));
+});
+
+test('Speech Mirror: local setup survives a whole Edge kiosk restart and requests the camera automatically', { timeout: 240000 }, async () => {
+  await page.goto(vm.HUB_URL+'/slp-videos/');
+  // The QA VM has no camera. Configure a canvas camera in this page only,
+  // then verify that a fresh, unmodified Edge session tries its real camera.
+  await page.evaluate(()=>{
+    const canvas=document.createElement('canvas');canvas.width=320;canvas.height=240;
+    canvas.getContext('2d').fillRect(0,0,320,240);window.testCameraCanvas=canvas;
+    navigator.mediaDevices.getUserMedia=async constraints=>{
+      if(constraints.audio!==false)throw new Error('Unexpected microphone request');
+      return canvas.captureStream(15);
+    };
+    localStorage.setItem('camera-session-canary','configured');
+  });
+  await page.getByRole('button',{name:'Partner controls',exact:true}).click();
+  await page.getByRole('button',{name:'Start camera',exact:true}).click();
+  await page.getByText('Live mirror · camera only',{exact:true}).waitFor();
+  const saved=await vm.api(page,'/api/slp-videos/camera');
+  assert.equal(saved.json.enabled,true);
+  await freshInstalledApp('/slp-videos/');
+  assert.equal(await page.evaluate(()=>localStorage.getItem('camera-session-canary')),null,'the old Edge InPrivate storage is gone');
+  assert.deepEqual((await vm.api(page,'/api/slp-videos/camera')).json,saved.json,'the local device setup survived');
+  await page.locator('#cameraStatus').filter({hasText:/Camera unavailable or in use|Camera access was denied|Live mirror/}).waitFor();
+  assert.equal(await page.locator('#recordingBadge').isVisible(),false);
+  console.log('# Speech Mirror restored local setup after full Edge restart and automatically requested the camera; physical camera unavailable on QA VM');
 });
 
 test("shut down: hub and kiosk stop cleanly", { timeout: 60000 }, async () => {

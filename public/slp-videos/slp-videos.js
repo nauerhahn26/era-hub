@@ -3,12 +3,9 @@ const $=id=>document.getElementById(id);
 const model=$('model'),mirror=$('mirror');
 const API='/api/slp-videos';
 let clips=[],index=0,camera=null,microphone=null,recorder=null,savePromise=null;
-const CAMERA_KEY='era.slp-videos.camera.v1';
-let cameraPreference={enabled:false,deviceId:''};
-try{const saved=JSON.parse(localStorage.getItem(CAMERA_KEY));if(saved&&typeof saved.enabled==='boolean'&&typeof saved.deviceId==='string')cameraPreference=saved;}catch{}
-let selectedCameraId=cameraPreference.deviceId,selectedCameraLabel=typeof cameraPreference.deviceLabel==='string'?cameraPreference.deviceLabel:'';
-function saveCameraPreference(enabled){cameraPreference={enabled,deviceId:selectedCameraId,deviceLabel:selectedCameraLabel};try{localStorage.setItem(CAMERA_KEY,JSON.stringify(cameraPreference));}catch{}}
-let wanted=cameraPreference.enabled,paused=false,gone=false,generation=0,acquiring=false,recordStarting=false;
+let selectedCameraId='',selectedCameraLabel='';
+function saveCameraPreference(enabled){return api('/camera',{method:'PUT',headers:{'Content-Type':'application/json'},keepalive:true,body:JSON.stringify({enabled,deviceId:selectedCameraId,deviceLabel:selectedCameraLabel})});}
+let wanted=false,paused=false,gone=false,generation=0,acquiring=false,recordStarting=false;
 let ready=false,refreshing=false,recordTimer=null,refreshTimer=null,volume=.45;
 const locked=()=>window.AppLock?.isLocked()||false;
 const active=()=>!gone&&!paused&&!locked()&&document.visibilityState==='visible';
@@ -28,9 +25,9 @@ function controls(){
  $('playIcon').toggleAttribute('hidden',!model.paused);$('pauseIcon').toggleAttribute('hidden',model.paused);
  $('record').disabled=!camera||!!recorder||!!savePromise||recordStarting||!active();
  $('stopRecord').disabled=!recorder;
- $('camera').disabled=acquiring;
+ $('camera').disabled=!ready||acquiring;
  $('camera').textContent=camera?'Stop camera':'Start camera';
- $('cameraSelect').disabled=acquiring||!!recorder||recordStarting;
+ $('cameraSelect').disabled=!ready||acquiring||!!recorder||recordStarting;
  $('recordingBadge').hidden=!recorder;
 }
 function choose(next){
@@ -66,7 +63,7 @@ async function cameraOptions(){
  }catch{}
 }
 async function startCamera(){
- if(!active()||camera||acquiring)return;
+ if(!ready||!active()||camera||acquiring)return;
  if(!navigator.mediaDevices?.getUserMedia){$('cameraStatus').textContent='Camera access requires opening the hub locally on this device.';return;}
  wanted=true;acquiring=true;const token=++generation;controls();
  try{
@@ -94,15 +91,16 @@ async function startCamera(){
   camera=stream;mirror.srcObject=stream;await mirror.play();
   if(token!==generation||!active()||!wanted){stream.getTracks().forEach(t=>t.stop());return;}
   selectedCameraId=deviceId;selectedCameraLabel=stream.getVideoTracks()[0].label||selectedCameraLabel;
-  saveCameraPreference(true);
-  $('cameraStatus').textContent='Live mirror · camera only';
+  let saved=true;try{await saveCameraPreference(true);}catch{saved=false;}
+  if(token!==generation||!active()||!wanted)return;
+  $('cameraStatus').textContent='Live mirror · camera only'+(saved?'':' · setup could not be saved; try starting again.');
   stream.getVideoTracks()[0].onended=()=>{stopCamera(false);$('cameraStatus').textContent='Camera disconnected. Start the camera to reconnect.';};
   await cameraOptions();
  }catch(e){if(token!==generation)return;stopCamera(false);$('cameraStatus').textContent=e.name==='NotAllowedError'?'Camera access was denied. Allow the camera in the browser, then try again.':'Camera unavailable or in use. Choose the front camera and try again.';}
  finally{acquiring=false;controls();}
 }
 function stopCamera(user=true){
- generation++;if(user){wanted=false;saveCameraPreference(false);}
+ generation++;if(user){wanted=false;void saveCameraPreference(false).catch(()=>{if(!wanted)$('cameraStatus').textContent='Camera off. Startup preference could not be saved; try again.';});}
  stopRecording();
  if(camera){for(const track of camera.getTracks()){track.onended=null;track.stop();}camera=null;}
  mirror.srcObject=null;$('cameraStatus').textContent='Camera off.';controls();
@@ -154,7 +152,7 @@ const bar=mountDoorBar(document.body,{appPath:'/slp-videos/',
  onLock(){suspend();},onUnlock(){controls();if(wanted)void startCamera();}});
 $('partnerToggle').onclick=()=>{const open=$('partner').hidden;$('partner').hidden=!open;$('partnerToggle').setAttribute('aria-expanded',String(open));if(open){void cameraOptions();void loadRecordings();}};
 $('camera').onclick=()=>camera?stopCamera():void startCamera();
-$('cameraSelect').onchange=()=>{const restart=!!camera;selectedCameraId=$('cameraSelect').value;selectedCameraLabel=selectedCameraId?$('cameraSelect').selectedOptions[0].textContent:'';saveCameraPreference(wanted);stopCamera(false);if(restart)void startCamera();};
+$('cameraSelect').onchange=()=>{const restart=!!camera;selectedCameraId=$('cameraSelect').value;selectedCameraLabel=selectedCameraId?$('cameraSelect').selectedOptions[0].textContent:'';stopCamera(false);if(restart)void startCamera();else void saveCameraPreference(wanted).catch(()=>{$('cameraStatus').textContent='Camera selection could not be saved. Try again.';});};
 $('record').onclick=startRecording;$('stopRecord').onclick=stopRecording;
 $('previous').onclick=()=>choose(index-1);$('next').onclick=()=>choose(index+1);
 async function play(){if(!active()||!clips.length)return;try{await model.play();$('videoStatus').textContent=`${index+1} of ${clips.length}`;}catch{$('videoStatus').textContent='This video cannot play here. Try an H.264 MP4 copy.';}controls();}
@@ -170,12 +168,13 @@ $('importFiles').onchange=async()=>{
  try{for(const file of files){await api('/library?name='+encodeURIComponent(file.name),{method:'PUT',headers:{'Content-Type':file.type||'application/octet-stream'},body:file});}await refresh();}
  catch(e){$('sourceStatus').textContent=e.message;}finally{$('importFiles').disabled=false;$('importFiles').value='';}
 };
-fetch('/settings').then(r=>r.json()).then(s=>{
+const cameraSetup=api('/camera').then(saved=>{selectedCameraId=saved.deviceId;selectedCameraLabel=saved.deviceLabel;wanted=saved.enabled;}).catch(()=>{$('cameraStatus').textContent='Saved camera setup could not be read. Start the camera to configure it again.';});
+Promise.all([cameraSetup,fetch('/settings').then(r=>r.json()).then(s=>{
  if(Number.isFinite(s.dwellMs)&&s.dwellMs>0){window.Dwell?.setMs(s.dwellMs);bar.setDwell(s.dwellMs);}
  if(Number.isFinite(s.musicVolCap))volume=Math.max(0,Math.min(1,s.musicVolCap/100));
  if(Number.isFinite(s.settleMs))window.Dwell?.set({settleMs:Math.max(0,Math.min(2000,s.settleMs))});
  model.volume=volume;bar.setPause(s.pauseGoes==='tdsnap');
-}).catch(()=>{}).finally(()=>{ready=true;void refresh();if(wanted)void startCamera();});
+}).catch(()=>{})]).finally(()=>{ready=true;controls();void refresh();if(wanted)void startCamera();});
 document.addEventListener('visibilitychange',()=>{
  if(document.visibilityState!=='visible')suspend();else{if(wanted)void startCamera();void refresh();controls();}
 });

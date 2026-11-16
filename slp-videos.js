@@ -12,6 +12,18 @@ function createSlpVideos({ dataDir, localFolder = () => null, serveMedia, maxRec
   const root = path.join(dataDir, 'slp-videos');
   const library = path.join(root, 'library'), recordings = path.join(root, 'recordings');
   const configFile = path.join(root, 'config.json');
+  const cameraFile = path.join(root, 'camera.json');
+  function cameraSetup() {
+    try {
+      const value=JSON.parse(fs.readFileSync(cameraFile,'utf8'));
+      if(validCamera(value))return {enabled:value.enabled,deviceId:value.deviceId,deviceLabel:value.deviceLabel};
+    } catch {}
+    return {enabled:false,deviceId:'',deviceLabel:''};
+  }
+  function validCamera(value) {
+    return value&&typeof value.enabled==='boolean'&&typeof value.deviceId==='string'&&value.deviceId.length<=1024&&
+      typeof value.deviceLabel==='string'&&value.deviceLabel.length<=1024;
+  }
   function json(res, status, value) {
     res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify(value));
@@ -71,6 +83,15 @@ function createSlpVideos({ dataDir, localFolder = () => null, serveMedia, maxRec
   }
   async function route(req,res,url) {
     const suffix = url.pathname.slice('/api/slp-videos'.length);
+    if(suffix==='/camera'&&req.method==='GET'){json(res,200,cameraSetup());return;}
+    if(suffix==='/camera'&&req.method==='PUT'){
+      let value;try{value=await body(req);}catch{json(res,400,{error:'Invalid camera configuration.'});return;}
+      if(!validCamera(value)){json(res,400,{error:'Invalid camera configuration.'});return;}
+      fs.mkdirSync(root,{recursive:true});
+      const temp=cameraFile+'.part';
+      fs.writeFileSync(temp,JSON.stringify({enabled:value.enabled,deviceId:value.deviceId,deviceLabel:value.deviceLabel}),{mode:0o600});
+      fs.renameSync(temp,cameraFile);json(res,200,cameraSetup());return;
+    }
     if (suffix === '/config' && req.method === 'PUT') {
       let value;
       try { value = await body(req); } catch { json(res,400,{error:'Invalid folder configuration.'}); return; }

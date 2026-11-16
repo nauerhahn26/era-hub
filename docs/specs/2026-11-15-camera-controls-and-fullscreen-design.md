@@ -7,7 +7,9 @@ taskbar without a hand touch. Testing and deployment are authorized.
 ## Camera and controls
 
 Speech Mirror stores its successful camera setup and selected camera identifier
-and label in this device's browser profile, using `era.slp-videos.camera.v1`. If
+and label in this device's local Hub data, using `slp-videos/camera.json` and
+the loopback-only `GET`/`PUT /api/slp-videos/camera` endpoint. Edge's kiosk mode
+uses InPrivate sessions, so browser storage cannot be the durable source. If
 the browser rotates identifiers, only a uniquely matching saved camera label
 can rebind that selection; a missing or ambiguous camera requires the partner.
 Later app
@@ -42,7 +44,9 @@ clicks, or make the app permanently topmost.
 Windows acceptance must inspect the actual bottom edge, not only the browser's
 reported dimensions. It must launch registered app paths through the installed
 batch launcher and measure coverage before any browser click. Talk returns and
-normal desktop use must remain available. Physical camera/gaze acceptance is
-performed on the home device after a green release pipeline.
+normal desktop use must remain available. Home-device acceptance checks the
+delivered version, media library and native launch coverage. Physical front-
+camera image quality and gaze operation require confirmation on the device.
 
-References: [Windows foreground activation](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow).
+References: [Windows foreground activation](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow),
+[Edge kiosk sessions](https://learn.microsoft.com/en-us/deployedge/microsoft-edge-configure-kiosk-mode).
