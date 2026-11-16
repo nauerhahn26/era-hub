@@ -12,10 +12,13 @@ front-facing camera if necessary. Camera permission is needed on the device
 running the Hub; open the local Hub rather than another computer's network
 address. The camera preview is muted, so it does not feed sound back through
 the speakers. Once started successfully, the selected camera is remembered in
-this device's browser profile and starts automatically on later openings.
+this device's local Hub data and starts automatically on later openings,
+including a complete browser restart. Browser camera permission is still needed.
 **Stop camera** keeps it off on later openings until started again. A missing
 saved camera is never replaced by an arbitrary different camera. A denied or
 occupied camera leaves video viewing and Exit usable.
+The preference is stored in `slp-videos/camera.json` under the Hub data folder;
+it is separate from the synced video folder and recordings.
 
 ## Practice videos
 

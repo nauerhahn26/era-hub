@@ -11,7 +11,7 @@ const { createSlpVideos } = require('../slp-videos.js');
 test('local library, folder refresh, recording separation and request boundaries', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'era-slp-'));
   const shared = path.join(dir, 'shared'); fs.mkdirSync(shared);
-  const api = createSlpVideos({ dataDir: dir, localFolder: () => shared,
+  let api = createSlpVideos({ dataDir: dir, localFolder: () => shared,
     serveMedia(req,res,root,name) { res.end(fs.readFileSync(path.join(root,name))); }, maxRecordingBytes: 32 });
   const server = http.createServer((req,res) => { if (!api.handle(req,res)) res.writeHead(404).end(); });
   await new Promise(r => server.listen(0,'127.0.0.1',r));
@@ -19,6 +19,13 @@ test('local library, folder refresh, recording separation and request boundaries
   const base = `http://127.0.0.1:${server.address().port}/api/slp-videos`;
   const request = (url,options) => fetch(base+url,options);
   const list = async () => (await request('/library')).json();
+  const camera={enabled:true,deviceId:'selected-camera',deviceLabel:'Front camera'};
+  assert.deepEqual(await (await request('/camera')).json(),{enabled:false,deviceId:'',deviceLabel:''});
+  assert.equal((await request('/camera',{method:'PUT',body:JSON.stringify(camera)})).status,200);
+  api=createSlpVideos({dataDir:dir,localFolder:()=>shared,serveMedia(req,res,root,name){res.end(fs.readFileSync(path.join(root,name)));},maxRecordingBytes:32});
+  assert.deepEqual(await (await request('/camera')).json(),camera,'camera setup survives restarting the local service');
+  assert.equal((await request('/camera',{method:'PUT',body:JSON.stringify({...camera,enabled:'yes'})})).status,400);
+  assert.equal((await request('/camera',{method:'PUT',body:JSON.stringify({...camera,deviceLabel:'x'.repeat(1025)})})).status,400);
   assert.deepEqual((await list()).videos, []);
   assert.equal((await request('/library?name=Yeah.mp4',{method:'PUT',body:'video',headers:{'Content-Type':'video/mp4'}})).status,201);
   let library = await list(); assert.equal(library.videos[0].title,'Yeah');
@@ -33,6 +40,7 @@ test('local library, folder refresh, recording separation and request boundaries
   assert.equal((await list()).videos.length,3,'folder changes appear on refresh');
   const configured=path.join(dir,'selected'); fs.mkdirSync(configured); fs.writeFileSync(path.join(configured,'Practice.mp4'),'practice');
   assert.equal((await request('/config',{method:'PUT',body:JSON.stringify({folder:configured})})).status,200);
+  assert.deepEqual(await (await request('/camera')).json(),camera,'changing the video folder preserves camera setup');
   assert.ok((await list()).videos.some(v=>v.title==='Practice')); 
   fs.rmSync(configured,{recursive:true});
   assert.equal((await list()).available,false,'missing configured folder is reported, never silently substituted');

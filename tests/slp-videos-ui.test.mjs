@@ -1,4 +1,4 @@
-import { test, before, after } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -29,6 +29,20 @@ before(async()=>{
   browser=await chromium.launch({args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});
 });
 after(async()=>{await browser?.close();server?.closeAllConnections();if(server)await new Promise(r=>server.close(r));if(dir)fs.rmSync(dir,{recursive:true,force:true});});
+beforeEach(async()=>{await fetch(base+'/api/slp-videos/camera',{method:'PUT',body:JSON.stringify({enabled:false,deviceId:'',deviceLabel:''})});});
+
+test('camera configuration survives a completely new browser session without browser storage',async()=>{
+ let context=await browser.newContext({permissions:['camera']});let page=await context.newPage();
+ await page.goto(base+'/slp-videos/');await page.getByRole('button',{name:'Partner controls',exact:true}).click();
+ await page.getByRole('button',{name:'Start camera',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelector('#cameraStatus').textContent.startsWith('Live mirror'));
+ await context.close();
+ context=await browser.newContext({permissions:['camera']});page=await context.newPage();
+ await page.goto(base+'/slp-videos/');
+ await page.waitForFunction(()=>document.querySelector('#mirror').srcObject?.active,null,{timeout:5000});
+ assert.equal(await page.locator('#mirror').evaluate(e=>e.srcObject.getAudioTracks().length),0);
+ await context.close();
+});
 
 test('side by side layout, real camera mirror, explicit local recording and cleanup',async()=>{
  const context=await browser.newContext({permissions:['camera','microphone'],viewport:{width:1280,height:720}});
@@ -158,7 +172,7 @@ test('late camera permission after leaving releases all acquired tracks',async()
  await page.evaluate(()=>{dispatchEvent(new Event('pagehide'));window.releaseCamera();});
  await page.waitForFunction(()=>window.pendingCamera.getTracks().every(t=>t.readyState==='ended'));
  assert.equal(await page.locator('#mirror').evaluate(e=>e.srcObject),null);
- assert.equal(await page.evaluate(()=>localStorage.getItem('era.slp-videos.camera.v1')),null,'late permission is not saved as a configured camera');
+ assert.equal((await (await page.request.get(base+'/api/slp-videos/camera')).json()).enabled,false,'late permission is not saved as a configured camera');
  await context.close();
 });
 
@@ -184,15 +198,17 @@ test('camera setup survives reopening; explicit Stop camera opts out of automati
  await page.getByRole('button',{name:'Start camera',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#mirror').srcObject);
  const choice=await page.locator('#cameraSelect option').evaluateAll(options=>options.find(o=>o.value)?.value);
  assert.ok(choice);await page.locator('#cameraSelect').selectOption(choice);
- await page.waitForFunction(()=>document.querySelector('#mirror').srcObject?.active);
+ await page.waitForFunction(()=>document.querySelector('#mirror').srcObject?.active&&document.querySelector('#cameraStatus').textContent.startsWith('Live mirror'));
  await page.reload();
- await page.waitForFunction(()=>document.querySelector('#mirror').srcObject?.active&&document.querySelector('#cameraStatus').textContent.startsWith('Live mirror'),null,{timeout:5000}).catch(async error=>{console.log(await page.evaluate(async()=>({error:window.cameraError,status:document.querySelector('#cameraStatus').textContent,savedMatchesAvailable:(await navigator.mediaDevices.enumerateDevices()).some(d=>d.deviceId===JSON.parse(localStorage.getItem('era.slp-videos.camera.v1')).deviceId)})));throw error;});
- assert.equal(await page.evaluate(()=>window.cameraRequests.at(-1).video.deviceId.exact),await page.evaluate(()=>JSON.parse(localStorage.getItem('era.slp-videos.camera.v1')).deviceId));
- assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('era.slp-videos.camera.v1')).deviceLabel),await page.locator('#mirror').evaluate(e=>e.srcObject.getVideoTracks()[0].label));
+ await page.waitForFunction(()=>document.querySelector('#mirror').srcObject?.active&&document.querySelector('#cameraStatus').textContent.startsWith('Live mirror'),null,{timeout:5000});
+ const saved=await (await page.request.get(base+'/api/slp-videos/camera')).json();
+ assert.equal(await page.evaluate(()=>window.cameraRequests.at(-1).video.deviceId.exact),saved.deviceId);
+ assert.equal(saved.deviceLabel,await page.locator('#mirror').evaluate(e=>e.srcObject.getVideoTracks()[0].label));
  assert.equal(await page.evaluate(()=>window.cameraRequests.every(r=>r.audio===false)),true,'automatic mirror never starts the microphone');
  assert.equal(await page.locator('#recordingBadge').isVisible(),false);
  await page.getByRole('button',{name:'Partner controls',exact:true}).click();
- await page.getByRole('button',{name:'Stop camera',exact:true}).click();await page.reload();
+ const stopped=page.waitForResponse(r=>r.url().endsWith('/api/slp-videos/camera')&&r.request().method()==='PUT');
+ await page.getByRole('button',{name:'Stop camera',exact:true}).click();await stopped;await page.reload();
  await page.waitForFunction(()=>document.querySelector('#sourceStatus').textContent.length>0);
  assert.equal(await page.evaluate(()=>window.cameraRequests.length),0,'explicit Stop persists across reopening');
  await context.close();
@@ -200,8 +216,8 @@ test('camera setup survives reopening; explicit Stop camera opts out of automati
 
 test('saved camera remains off while locked and starts only after unlocking',async()=>{
  const context=await browser.newContext({permissions:['camera']});const page=await context.newPage();
+ await page.request.put(base+'/api/slp-videos/camera',{data:{enabled:true,deviceId:'',deviceLabel:''}});
  await page.addInitScript(()=>{
-  localStorage.setItem('era.slp-videos.camera.v1',JSON.stringify({enabled:true,deviceId:''}));
   localStorage.setItem('era.app-lock.v1.slp-videos',JSON.stringify({until:0}));
   const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);window.cameraCalls=0;
   navigator.mediaDevices.getUserMedia=constraints=>{window.cameraCalls++;return original(constraints);};
