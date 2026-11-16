@@ -17,7 +17,7 @@ siblings may touch shared launch behavior. Their worktrees remain untouched.
 - [x] Run focused tests and the full detached gate; record the verdict.
 - [x] Land, run patch-release Windows acceptance and publish the tested bytes.
 - [x] Update the home device and verify the delivered version, assets and library.
-- [ ] Finish the home device's native bottom-edge probe when it is online again.
+- [x] Finish the home device's native bottom-edge probe after it is online again.
 
 Initial evidence: fresh batch launches request kiosk mode but never notify the
 existing settle helper; settling at first install is protected by a one-time
@@ -91,10 +91,15 @@ The home device updated through the normal updater from `20261115.1956` to
 CSS hashes match the release payload; the shared folder remains available with
 both practice videos. The installed batch launcher then opened Speech Mirror
 successfully (completed, result 0), without an agent pointer/touch action. The
-device went offline before the final native window measurement, so that
-measurement remains pending. The old version had no saved camera choice; start
-and select the camera once on this version to save its setup. Physical camera
-image quality and gaze accuracy require confirmation on the device.
+device initially went offline before the native window measurement. After it
+was woken, another fresh installed-batch launch completed with result 0 on the
+same build. A windowless native probe confirmed that the owned Speech Mirror
+Chrome kiosk held focus and covered the center and all three bottom-edge
+checkpoints on the Windows-reported 1280×720 desktop, without an agent pointer
+or touch action. The taskbar was behind the app. The old version had no saved
+camera choice; start and select the camera once on this version to save its
+setup. Physical camera image quality and gaze accuracy require confirmation on
+the device.
 
 All release QA hosts were destroyed by the runner's cleanup. No live host hub
 was restarted. Future checks should review camera lifecycle alongside native
