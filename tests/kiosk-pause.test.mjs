@@ -256,3 +256,16 @@ test("paused app whose window has gone: 409 launch", async () => {
   // and it was forgotten, so a retry does not keep trying a dead window
   assert.equal((await resume(BASE_NOWIN, JSON.stringify({ path: "/reader/" }))).status, 409);
 });
+
+test('fresh-launch settle acknowledges local callers and rejects cross-site requests',async()=>{
+ await fetch(`${BASE}/kiosk/exit`,{method:'POST'});
+ const response=await fetch(`${BASE}/kiosk/settle`,{method:'POST'});
+ assert.equal(response.status,202);assert.equal((await response.json()).action,'settling');
+ const external=await fetch(`${BASE}/kiosk/settle`,{method:'POST',headers:{Origin:'https://untrusted.invalid'}});
+ assert.equal(external.status,403);
+ const settings=await (await fetch(`${BASE}/settings`)).json();
+ if(settings.pauseGoes==='tdsnap'){
+  await fetch(`${BASE}/kiosk/pause`,{method:'POST',body:JSON.stringify({path:'/slp-videos/'})});
+  assert.equal((await fetch(`${BASE}/kiosk/settle`,{method:'POST'})).status,409,'a late launch notification cannot cover the talker');
+ }
+});

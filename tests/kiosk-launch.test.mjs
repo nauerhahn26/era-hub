@@ -145,3 +145,25 @@ test('the module never goes through cmd.exe or a PowerShell file', () => {
   assert.doesNotMatch(src, /\.ps1/i);
   assert.doesNotMatch(src, /shell:\s*true/);
 });
+
+test('every fresh batch launch requests native settling after the browser starts',()=>{
+ const launch=bat.indexOf(kioskLine),notify=bat.indexOf('/kiosk/settle');
+ assert.ok(notify>launch,'settle notification runs after the common kiosk launch');
+ const line=bat.split('\n').find(l=>l.includes('/kiosk/settle'));
+ assert.match(line,/curl\.exe .*--max-time 2 .*POST/,'notification is bounded and never waits for the native window');
+});
+
+test('native settle owns one child, deduplicates requests and cancels only that child',async()=>{
+ const {EventEmitter}=await import('node:events');
+ const {createKioskSettler}=require('../kiosk-launch.js');
+ const children=[],events=[];
+ const localFs={openSync(){return 7;},writeSync(){},closeSync(){events.push('close-log');}};
+ const settler=createKioskSettler({platform:'win32',logDir:'scratch',fs:localFs,script:()=> 'our-window-only',
+  spawn(exe,args,options){const c=new EventEmitter();c.unref=()=>{};c.kill=()=>{events.push('kill-owned');c.emit('exit',null);};children.push({c,exe,args,options});return c;}});
+ const first=settler.settle();assert.equal(settler.settle(),first);assert.equal(children.length,1);
+ assert.equal(children[0].exe,'powershell.exe');assert.ok(children[0].args.includes('our-window-only'));
+ assert.equal(children[0].options.windowsHide,true);
+ settler.cancel();assert.equal(await first,false);assert.deepEqual(events,['kill-owned','close-log']);
+ const second=settler.settle();assert.equal(children.length,2);children[1].c.emit('exit',0);assert.equal(await second,true);
+ settler.cancel();assert.equal(events.filter(e=>e==='kill-owned').length,1,'completed children are never signalled');
+});

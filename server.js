@@ -608,21 +608,11 @@ const minimizeKiosk = stepAsideFromKiosk;
 // Settle a kiosk the hub just launched itself (button press to ask): the same
 // SetWindowPos + foreground move as the first launch, waiting up to 30 s for
 // the window. Windows only; logged beside the other window moves.
-function settleKiosk() {
-  if (process.platform !== "win32") return Promise.resolve();
-  const { spawn } = require("child_process");
-  return new Promise((resolve) => {
-    try {
-      const out = fs.openSync(path.join(LOGS, "stepaside.log"), "a");
-      fs.writeSync(out, new Date().toISOString() + " settle (button relaunch)\n");
-      const c = spawn("powershell.exe", ["-NoProfile", "-Command", psWindowPrelude() + psSettleKiosk(6)],
-        { stdio: ["ignore", out, out], windowsHide: true });
-      c.on("exit", (code) => { try { fs.writeSync(out, "exit " + code + "\n"); fs.closeSync(out); } catch {} resolve(); });
-      c.on("error", () => resolve());
-      c.unref();
-    } catch { resolve(); }
-  });
-}
+const kioskSettler = require("./kiosk-launch.js").createKioskSettler({
+  logDir: LOGS, script: () => psWindowPrelude() + psSettleKiosk(6),
+});
+function settleKiosk() { return kioskSettler.settle(); }
+function cancelKioskSettle() { kioskSettler.cancel(); }
 // Button press to ask (design 2026-10-27 §4.2): the partner's button arrives
 // as POST /buttons/press from the device listener; buttons.js decides what a
 // press does. The relaunch is start-hub.bat's kiosk launch, from node.
@@ -1791,6 +1781,7 @@ function doorGoes() {
 // Resolves when the sweep has run (the button relaunch waits for it; every
 // other caller fires and forgets).
 function closeKiosk() {
+  cancelKioskSettle();
   if (process.platform !== "win32") return Promise.resolve();
   return new Promise((resolve) => {
   const { spawn } = require("child_process");
@@ -1964,7 +1955,7 @@ function runPresenceHook(device, event) {
   } catch (e) { console.error("[presence] hook: " + e.message); }
 }
 // /presence is another device's beacon (§4.5), not her either.
-const NOT_INTERACTION = new Set(["/update/check", "/kiosk/resume", "/kiosk/close", "/presence"]);
+const NOT_INTERACTION = new Set(["/update/check", "/kiosk/resume", "/kiosk/close", "/kiosk/settle", "/presence"]);
 function stampInteraction(req) {
   const p = (req.url || "/").split("?")[0];
   if (req.method === "POST" ? !NOT_INTERACTION.has(p)
@@ -3483,6 +3474,7 @@ const server = http.createServer((req, res) => {
   // this window. Settings > exitTo: "tdsnap" (default) | "home"; with no
   // engine reachable the door always goes home, as it always did.
   if (req.method === "POST" && urlPath === "/kiosk/exit") {
+    cancelKioskSettle();
     const answer = (action) => {
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
       res.end(JSON.stringify({ action }));
@@ -3511,6 +3503,7 @@ const server = http.createServer((req, res) => {
   // and no JSON content type, and the worst a hostile tab could do is park her
   // in TD Snap, which the 🚪 already allows (spec §3.2).
   if (req.method === "POST" && urlPath === "/kiosk/pause") {
+    cancelKioskSettle();
     let body = "";
     req.on("data", (c) => { body += c; if (body.length > 4096) req.destroy(); });
     req.on("end", () => {
@@ -3562,6 +3555,20 @@ const server = http.createServer((req, res) => {
   // 200 "resumed" = the same app is back in front and the bat stops; 409
   // "launch" = launch it the way you always did (curl -f exits 22 on a 4xx,
   // so `if not errorlevel 1` is exactly "not resumed").
+  // A fresh shortcut launch needs the same native settling as a Talk return.
+  // Acknowledge before waiting for the browser window; the batch must not hang.
+  if (req.method === "POST" && urlPath === "/kiosk/settle") {
+    const origin = req.headers.origin;
+    if (!updater.isLoopback(req.socket && req.socket.remoteAddress) ||
+        (origin && origin !== "http://" + req.headers.host) || req.headers["sec-fetch-site"] === "cross-site") {
+      res.writeHead(403).end(); return;
+    }
+    if (paused) { res.writeHead(409).end(); return; }
+    req.resume();
+    void settleKiosk();
+    res.writeHead(202, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ action: "settling" })); return;
+  }
   if (req.method === "POST" && urlPath === "/kiosk/resume") {
     let body = "";
     req.on("data", (c) => { body += c; if (body.length > 4096) req.destroy(); });
@@ -3570,6 +3577,7 @@ const server = http.createServer((req, res) => {
       try { const j = JSON.parse(body); if (j && typeof j.path === "string") want = j.path; } catch {}
       const asked = normalizePath(want);
       const launch = (why) => {
+        cancelKioskSettle();
         if (paused) console.log("[kiosk] resume " + (asked || "(no path)") + ": " + why + " — forgetting " + paused.path);
         else console.log("[kiosk] resume " + (asked || "(no path)") + ": " + why);
         // Whatever was paused cannot survive this: the bat that gets the 409

@@ -507,6 +507,10 @@ export async function geometry(page) {
  *  answered "Administrator: cmd.exe" to itself), and no Add-Type compile per
  *  call (210 s cold on the QEMU guest, 9/3). Runs in the desktop session. */
 let fgBuilt = false;
+export function browserCoversDesktop({ fgExe, topExe, bottomExes = [] }) {
+  return /^(msedge|chrome)$/i.test(fgExe || '') && topExe === fgExe &&
+    bottomExes.length === 3 && bottomExes.every(exe => exe === fgExe);
+}
 export async function windows() {
   if (!fgBuilt) {
     const cs = path.join(OUT, "fg.cs");
@@ -522,7 +526,12 @@ class P { [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
  static string E(IntPtr h) { uint pid; GetWindowThreadProcessId(h, out pid); try { return System.Diagnostics.Process.GetProcessById((int)pid).ProcessName; } catch { return ""; } }
  static void Main(string[] a) { var p = new POINT(); p.x = GetSystemMetrics(0) / 2; p.y = GetSystemMetrics(1) / 2;
   var top = GetAncestor(WindowFromPoint(p), 2);
-  File.WriteAllText(a[0], "TITLE=" + T(GetForegroundWindow()) + "\\r\\nTOP=" + T(top) + "\\r\\nTOPEXE=" + E(top) + "\\r\\n"); } }
+  var fg = GetForegroundWindow(); var bottom = "";
+  foreach (int x in new int[] { 8, GetSystemMetrics(0) / 2, GetSystemMetrics(0) - 8 }) {
+   p.x = x; p.y = GetSystemMetrics(1) - 3;
+   bottom += "BOTTOMEXE=" + E(GetAncestor(WindowFromPoint(p), 2)) + "\\r\\n";
+  }
+  File.WriteAllText(a[0], "TITLE=" + T(fg) + "\\r\\nFGEXE=" + E(fg) + "\\r\\nTOP=" + T(top) + "\\r\\nTOPEXE=" + E(top) + "\\r\\n" + bottom); } }
 `);
     ship(cs);
     const out = bat("fg-build", [`if exist ${GUEST_HOME}\\fg.exe del ${GUEST_HOME}\\fg.exe`,
@@ -534,8 +543,9 @@ class P { [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
   guest(`del ${GUEST_HOME}\\fg.txt`, { soft: true });
   interactive("fg", [], { tr: `${GUEST_HOME}\\fg.exe ${GUEST_HOME}\\fg.txt` });
   const r = await waitFor(() => {
-    const t = guestText("fg.txt"); const m = t.match(/^TITLE=(.*)$/m), n = t.match(/^TOP=(.*)$/m), e = t.match(/^TOPEXE=(.*)$/m);
-    return m && n && e && { fg: m[1].trim(), top: n[1].trim(), topExe: e[1].trim() };
+    const t = guestText("fg.txt"); const m = t.match(/^TITLE=(.*)$/m), n = t.match(/^TOP=(.*)$/m), e = t.match(/^TOPEXE=(.*)$/m), f = t.match(/^FGEXE=(.*)$/m);
+    const bottomExes = [...t.matchAll(/^BOTTOMEXE=(.*)$/gm)].map(m => m[1].trim());
+    return m && n && e && f && bottomExes.length === 3 && { fg: m[1].trim(), top: n[1].trim(), topExe: e[1].trim(), fgExe: f[1].trim(), bottomExes };
   }, { timeout: 90000, every: 2000, what: "fg.txt" });
   console.log(`# in front: ${JSON.stringify(r.top)} (${r.topExe}) — focused: ${JSON.stringify(r.fg)}`);
   return r;

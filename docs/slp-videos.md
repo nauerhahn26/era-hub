@@ -3,14 +3,19 @@
 Enable **Speech Mirror** in Settings → Apps & navigation, then open it from the
 home screen. A practice video appears on the left; the live camera mirror is
 on the right. Previous and Next select a video; Play/Pause and Replay control
-it. The video and mirror themselves are not gaze targets. Exit and Talk use
+it with large icons and labels. Play changes to Pause while playing. The video
+and mirror themselves are not gaze targets. Exit and Talk use
 the standard shared bar. There is no automatic next video or recording.
 
 Open **Partner controls** by touch or mouse. Start camera and select the
 front-facing camera if necessary. Camera permission is needed on the device
 running the Hub; open the local Hub rather than another computer's network
 address. The camera preview is muted, so it does not feed sound back through
-the speakers. A denied or occupied camera leaves video viewing and Exit usable.
+the speakers. Once started successfully, the selected camera is remembered in
+this device's browser profile and starts automatically on later openings.
+**Stop camera** keeps it off on later openings until started again. A missing
+saved camera is never replaced by an arbitrary different camera. A denied or
+occupied camera leaves video viewing and Exit usable.
 
 ## Practice videos
 

@@ -14,10 +14,10 @@
  <div id="mirrorPanel" class="panel"><h2>You</h2><video id="mirror" playsinline muted autoplay></video><p id="cameraStatus" role="status">Start the camera in Partner controls to see yourself.</p><strong id="recordingBadge" hidden>Recording</strong></div>
 </section>
 <nav class="commands" aria-label="Video controls">
-<button id="previous" class="dwell" data-dwell-say="Previous video">Previous</button>
-<button id="play" class="dwell" data-dwell-say="Play">Play</button>
-<button id="replay" class="dwell" data-dwell-say="Replay">Replay</button>
-<button id="next" class="dwell" data-dwell-say="Next video">Next</button>
+<button id="previous" class="dwell" aria-label="Previous video" title="Previous video" data-dwell-say="Previous video"><svg class="commandIcon" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><path fill="currentColor" d="M13 12h7v40h-7zM49 12v40L22 32z"/></svg><span class="commandLabel">Previous</span></button>
+<button id="play" class="dwell" aria-label="Play" title="Play" data-dwell-say="Play"><svg id="playIcon" class="commandIcon" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><path fill="currentColor" d="M20 10v44l34-22z"/></svg><svg id="pauseIcon" class="commandIcon" viewBox="0 0 64 64" aria-hidden="true" focusable="false" hidden><path fill="currentColor" d="M16 10h11v44H16zM37 10h11v44H37z"/></svg><span id="playLabel" class="commandLabel">Play</span></button>
+<button id="replay" class="dwell" aria-label="Replay" title="Replay" data-dwell-say="Replay"><svg class="commandIcon" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><path d="M16 20a22 22 0 1 1-5 22" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path fill="currentColor" d="M7 6v22h22z"/></svg><span class="commandLabel">Replay</span></button>
+<button id="next" class="dwell" aria-label="Next video" title="Next video" data-dwell-say="Next video"><svg class="commandIcon" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><path fill="currentColor" d="M44 12h7v40h-7zM15 12l27 20-27 20z"/></svg><span class="commandLabel">Next</span></button>
 </nav>
 </main>
 <aside id="partner" hidden aria-label="Partner controls">
