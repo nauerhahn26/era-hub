@@ -40,3 +40,14 @@ Camera setup now lives in the local Hub data instead. Service-restart and
 new-browser-session tests pass. Windows acceptance also checks that local setup
 survives a complete Edge restart and triggers an automatic camera request
 (the QA VM has no physical camera). A new full gate and candidate build follow.
+
+The durable-camera implementation passed a second fresh gate: 210 passed,
+0 failed, receipt `2026-11-16T00-40-09Z-0102163`. The Windows candidate then
+passed all existing checks and all 14 fresh app routes at 1280×800: each browser
+was focused, covered the center and three bottom-edge points, and filled the
+screen before any click. The new camera fixture exposed an empty canvas stream
+that left video playback waiting for its first frame. A direct browser
+reproduction confirmed stream active / media readyState 0; drawing frames
+unblocked the preview, saved setup and passed fresh-session automatic camera
+request. The fixture now delivers frames continuously. The app code is unchanged
+by this fixture correction; the required gate and Windows pipeline are rerun.
