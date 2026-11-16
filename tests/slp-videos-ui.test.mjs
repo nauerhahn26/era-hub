@@ -44,6 +44,30 @@ test('camera configuration survives a completely new browser session without bro
  await context.close();
 });
 
+test('camera startup resumes when launch settling hides and restores the app during a pending camera request',async()=>{
+ const context=await browser.newContext({permissions:['camera']});const page=await context.newPage();
+ await page.request.put(base+'/api/slp-videos/camera',{data:{enabled:true,deviceId:'',deviceLabel:''}});
+ await page.addInitScript(()=>{
+  const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);window.cameraRequests=[];
+  navigator.mediaDevices.getUserMedia=async constraints=>{
+   window.cameraRequests.push(constraints);
+   if(window.cameraRequests.length===1){await new Promise(resolve=>{window.releaseCamera=resolve;});const stream=await original(constraints);window.firstCameraStream=stream;return stream;}
+   return original(constraints);
+  };
+ });
+ await page.goto(base+'/slp-videos/');await page.waitForFunction(()=>!!window.releaseCamera);
+ await page.evaluate(()=>{
+  Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});document.dispatchEvent(new Event('visibilitychange'));
+  Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});document.dispatchEvent(new Event('visibilitychange'));
+  window.releaseCamera();
+ });
+ await page.waitForFunction(()=>document.querySelector('#mirror').srcObject?.active&&document.querySelector('#cameraStatus').textContent.startsWith('Live mirror'),null,{timeout:5000});
+ assert.equal(await page.evaluate(()=>window.firstCameraStream.getTracks().every(t=>t.readyState==='ended')),true);
+ assert.equal(await page.evaluate(()=>window.cameraRequests.length),2);
+ assert.equal(await page.evaluate(()=>window.cameraRequests.every(c=>c.audio===false)),true);
+ await context.close();
+});
+
 test('side by side layout, real camera mirror, explicit local recording and cleanup',async()=>{
  const context=await browser.newContext({permissions:['camera','microphone'],viewport:{width:1280,height:720}});
  const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
@@ -89,13 +113,14 @@ test('side by side layout, real camera mirror, explicit local recording and clea
 
 test('denied camera keeps library and Exit available; no recording starts automatically',async()=>{
  const context=await browser.newContext();const page=await context.newPage();
- await page.addInitScript(()=>{Object.defineProperty(navigator.mediaDevices,'getUserMedia',{value:async()=>{throw new DOMException('Denied','NotAllowedError');}});});
+ await page.addInitScript(()=>{window.cameraCalls=0;Object.defineProperty(navigator.mediaDevices,'getUserMedia',{value:async()=>{window.cameraCalls++;throw new DOMException('Denied','NotAllowedError');}});});
  await page.goto(base+'/slp-videos/');
  await page.getByRole('button',{name:'Partner controls',exact:true}).click();
  await page.getByRole('button',{name:'Start camera',exact:true}).click();
  await page.getByText(/Camera access was denied/).waitFor();
  assert.equal(await page.locator('#barDoor').isVisible(),true);
  assert.equal(await page.locator('#record').isDisabled(),true);
+ assert.equal(await page.evaluate(()=>window.cameraCalls),1,'a real failure never loops through camera requests');
  await context.close();
 });
 

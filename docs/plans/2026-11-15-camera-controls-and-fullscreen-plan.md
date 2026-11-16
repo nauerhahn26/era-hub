@@ -23,7 +23,7 @@ existing settle helper; settling at first install is protected by a one-time
 marker, while Talk returns and button relaunches have their own settle calls.
 No touch or browser navigation was injected on the home device during diagnosis.
 
-Focused verification: 55 tests passed across the camera/storage, playback UI,
+Focused verification: 56 tests passed across the camera/storage, playback UI,
 launcher, pause/resume, batch-launcher and native coverage contracts. The
 playback targets contain both icons and labels at 1280×720, 1280×800 and
 1920×1080. The suite registry remains unchanged at 210 suites.
@@ -51,3 +51,12 @@ reproduction confirmed stream active / media readyState 0; drawing frames
 unblocked the preview, saved setup and passed fresh-session automatic camera
 request. The fixture now delivers frames continuously. The app code is unchanged
 by this fixture correction; the required gate and Windows pipeline are rerun.
+
+The fixture correction passed 210 fresh suites (one existing Watch UI flake
+passed its automatic retry), receipt `2026-11-16T01-23-58Z-dd43605`.
+A direct startup check then reproduced a camera request surviving a brief
+hide/restore while acquisition was pending: the stale grant stopped correctly
+but prevented the wanted preview from restarting. A red browser test pins that
+transition. After releasing a stale grant, the camera now retries only when
+the visible, unlocked app still wants it. Real failures never loop. All 56
+focused tests pass, including late-grant cleanup, hide/restore and denial.

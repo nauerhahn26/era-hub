@@ -65,7 +65,7 @@ async function cameraOptions(){
 async function startCamera(){
  if(!ready||!active()||camera||acquiring)return;
  if(!navigator.mediaDevices?.getUserMedia){$('cameraStatus').textContent='Camera access requires opening the hub locally on this device.';return;}
- wanted=true;acquiring=true;const token=++generation;controls();
+ wanted=true;acquiring=true;const token=++generation;let failed=false;controls();
  try{
   let deviceId=selectedCameraId;
   async function matchSavedCamera(){
@@ -96,8 +96,8 @@ async function startCamera(){
   $('cameraStatus').textContent='Live mirror · camera only'+(saved?'':' · setup could not be saved; try starting again.');
   stream.getVideoTracks()[0].onended=()=>{stopCamera(false);$('cameraStatus').textContent='Camera disconnected. Start the camera to reconnect.';};
   await cameraOptions();
- }catch(e){if(token!==generation)return;stopCamera(false);$('cameraStatus').textContent=e.name==='NotAllowedError'?'Camera access was denied. Allow the camera in the browser, then try again.':'Camera unavailable or in use. Choose the front camera and try again.';}
- finally{acquiring=false;controls();}
+ }catch(e){if(token!==generation)return;failed=true;stopCamera(false);$('cameraStatus').textContent=e.name==='NotAllowedError'?'Camera access was denied. Allow the camera in the browser, then try again.':'Camera unavailable or in use. Choose the front camera and try again.';}
+ finally{acquiring=false;controls();if(!failed&&token!==generation&&wanted&&active()&&!camera)void startCamera();}
 }
 function stopCamera(user=true){
  generation++;if(user){wanted=false;void saveCameraPreference(false).catch(()=>{if(!wanted)$('cameraStatus').textContent='Camera off. Startup preference could not be saved; try again.';});}
