@@ -313,6 +313,17 @@ signed); an older hub ignores the body and the script says so plainly.
 **App packs still come from the public feed** (`server.js` downloads packs from
 `updater.FEED`) — only the suite tarball comes from the pushed dist.
 
+## Full-screen app launches
+
+Every Windows app shortcut uses `start-hub.bat`, which requests kiosk mode and
+then POSTs to the loopback-only `/kiosk/settle` endpoint. The native helper sizes
+the kiosk to the display and brings it forward, including the existing
+minimize/restore fallback when Windows refuses background activation. This
+runs on every fresh launch, independently of first-install settling. Talk,
+Exit, Close and a new launch cancel the owned pending helper. Windows release
+acceptance samples the center and three bottom-edge points before touching
+each installed app, as well as checking its viewport geometry.
+
 ## Alternative Pencil dwell
 
 The Pencil has an independent `pencilDwellMs` setting (default 1500 ms,

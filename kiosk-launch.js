@@ -105,4 +105,50 @@ function createKioskLauncher(options = {}) {
   return { relaunch, last: () => last };
 }
 
-module.exports = { kioskArgs, findBrowser, createKioskLauncher, BROWSERS, GONE_MS, POLL_MS };
+// One owned native settle per launch. Cancellation must not affect a browser
+// or any other session: only the PowerShell child started here is signalled.
+function createKioskSettler(options = {}) {
+  const platform = options.platform || process.platform;
+  const localFs = options.fs || fs;
+  const spawn = options.spawn || childProcess.spawn;
+  const logFile = require('node:path').join(options.logDir, 'stepaside.log');
+  let job = null;
+  function settle() {
+    if (platform !== 'win32') return Promise.resolve(false);
+    if (job) return job.promise;
+    let resolve;
+    const promise = new Promise(done => { resolve = done; });
+    const current = { promise, child: null, fd: null, finished: false };
+    job = current;
+    current.finish = success => {
+      if (current.finished) return;
+      current.finished = true;
+      if (current.fd !== null) { try { localFs.closeSync(current.fd); } catch {} }
+      if (job === current) job = null;
+      resolve(success);
+    };
+    try {
+      current.fd = localFs.openSync(logFile, 'a');
+      localFs.writeSync(current.fd, new Date().toISOString() + ' settle (kiosk launch)\n');
+      const child = spawn('powershell.exe', ['-NoProfile', '-Command', options.script()],
+        { stdio: ['ignore', current.fd, current.fd], windowsHide: true });
+      current.child = child;
+      child.on('exit', code => {
+        if (!current.finished) { try { localFs.writeSync(current.fd, 'exit ' + code + '\n'); } catch {} }
+        current.finish(code === 0);
+      });
+      child.on('error', () => current.finish(false));
+      child.unref();
+    } catch { current.finish(false); }
+    return promise;
+  }
+  function cancel() {
+    const current = job;
+    if (!current) return;
+    try { current.child?.kill(); } catch {}
+    current.finish(false);
+  }
+  return { settle, cancel };
+}
+
+module.exports = { kioskArgs, findBrowser, createKioskLauncher, createKioskSettler, BROWSERS, GONE_MS, POLL_MS };

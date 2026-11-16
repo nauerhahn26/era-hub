@@ -6,10 +6,20 @@
 // like tests-vm/native-display.test.mjs).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { geometry } from './lib/vm.mjs';
+import { geometry, browserCoversDesktop } from './lib/vm.mjs';
 
 const page = (win) => ({ evaluate: async () => ({ ...win }) });
 const screen = (extra = {}) => ({ w: 1024, h: 768, x: 0, y: 0, sw: 1024, sh: 768, ...extra });
+
+test('native coverage requires browser focus, center and every sampled bottom edge', () => {
+  const covered = { fgExe: 'msedge', topExe: 'msedge', bottomExes: ['msedge', 'msedge', 'msedge'] };
+  assert.equal(browserCoversDesktop(covered), true);
+  assert.equal(browserCoversDesktop({ ...covered, bottomExes: ['msedge', 'explorer', 'msedge'] }), false);
+  assert.equal(browserCoversDesktop({ ...covered, fgExe: 'explorer' }), false);
+  assert.equal(browserCoversDesktop({ ...covered, topExe: 'explorer' }), false);
+  assert.equal(browserCoversDesktop({ ...covered, bottomExes: [] }), false);
+  assert.equal(browserCoversDesktop({ fgExe: 'chrome', topExe: 'chrome', bottomExes: ['chrome', 'chrome', 'chrome'] }), true);
+});
 
 async function measure(win) {
   const lines = [];

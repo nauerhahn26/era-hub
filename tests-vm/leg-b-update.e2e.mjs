@@ -476,6 +476,32 @@ test("after the update: all four Games work and tic-tac-toe survives a whole kio
   console.log("# installed Games UI and whole-browser durability: " + JSON.stringify(result.report));
 });
 
+test("fresh launches: every installed app covers the Windows taskbar without a touch", { timeout: 1200000 }, async () => {
+  const apps = vm.hubGet('/apps').apps.filter(app => app.path && app.installed);
+  const routes = [...new Set(['/home/', '/settings/', ...apps.map(app => app.path)])];
+  assert.ok(routes.includes('/slp-videos/'), 'Speech Mirror participates in shared launch acceptance');
+  const report = [];
+  for (const route of routes) {
+    // Use the installed shortcut target, including its real settle notification.
+    // No page click, bringToFront or synthetic pointer activation is allowed.
+    try { await browser?.close(); } catch {}
+    vm.interactive('fresh-app', ['set ERA_QA_CDP=9222', `call "${vm.INSTDIR}\\start-hub.bat" 8377 "${route}"`]);
+    ({ browser, page } = await vm.kiosk());
+    const target = new URL(route, vm.HUB_URL);
+    await page.waitForURL(url => url.pathname === target.pathname && url.search === target.search, { timeout: 120000 });
+    const native = await vm.waitFor(async () => {
+      const state = await vm.windows();
+      return vm.browserCoversDesktop(state) && state;
+    }, { timeout: 90000, every: 2000, what: 'native bottom-edge coverage for ' + route });
+    const measured = await vm.geometry(page);
+    assert.equal(measured.fullscreen, true, route + ': ' + JSON.stringify(measured.win));
+    report.push({ route, win: measured.win, ...native });
+    vm.shot('fresh-' + route.replace(/[^a-z0-9]+/gi, '-'));
+  }
+  fs.writeFileSync(path.join(vm.OUT, 'fresh-launch-coverage.json'), JSON.stringify(report, null, 2));
+  console.log('# fresh launches covered at center and all three bottom-edge points: ' + routes.join(', '));
+});
+
 test("shut down: hub and kiosk stop cleanly", { timeout: 60000 }, async () => {
   try { await browser?.close(); } catch {}
   vm.bat("stop", ["taskkill /IM msedge.exe /F >nul 2>&1", "taskkill /IM node.exe /F >nul 2>&1", "echo stopped"]);

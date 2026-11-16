@@ -43,6 +43,7 @@ test('side by side layout, real camera mirror, explicit local recording and clea
  await page.getByRole('button',{name:'Start camera',exact:true}).click();
  await page.waitForFunction(()=>document.querySelector('#mirror').srcObject?.getVideoTracks()[0]?.readyState==='live');
  assert.equal(await page.locator('#mirror').evaluate(e=>e.muted),true);
+ for(const id of ['previous','play','replay','next'])assert.ok(await page.locator('#'+id+' svg').count(),'each playback command has an icon');
  assert.match(await page.locator('#mirror').evaluate(e=>getComputedStyle(e).transform),/-1/);
  const partner=await page.locator('#partnerToggle').boundingBox(),lock=await page.locator('.app-lock-control').boundingBox();
  assert.ok(partner.x+partner.width<=lock.x,'Partner controls leave the shared lock unobscured');
@@ -59,9 +60,15 @@ test('side by side layout, real camera mirror, explicit local recording and clea
  assert.ok(fs.statSync(path.join(dir,'slp-videos','recordings',saved.recordings[0].id)).size>100);
  await page.getByRole('button',{name:'Stop camera',exact:true}).click();
  assert.equal(await page.locator('#mirror').evaluate(e=>e.srcObject),null);
- for(const viewport of [{width:1280,height:800},{width:1920,height:1080}]){
+ for(const viewport of [{width:1280,height:720},{width:1280,height:800},{width:1920,height:1080}]){
   await page.setViewportSize(viewport);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  assert.equal(await page.locator('.commands button').evaluateAll(buttons=>buttons.every(button=>{
+   const outer=button.getBoundingClientRect();
+   return [...button.querySelectorAll('.commandLabel,svg:not([hidden])')].every(child=>{
+    const inner=child.getBoundingClientRect();return inner.top>=outer.top&&inner.bottom<=outer.bottom&&inner.left>=outer.left&&inner.right<=outer.right;
+   });
+  })),true,'icons and labels fit inside every target at '+JSON.stringify(viewport));
  }
  assert.deepEqual(errors,[]);await context.close();
 });
@@ -129,9 +136,14 @@ test('actual shared dwell plays video once per look and requires moving away to 
  await page.waitForFunction(()=>window.Dwell&&!window.Dwell.state().suppressedMs);
  const b=await page.locator('#play').boundingBox();await page.mouse.move(1,100);await page.mouse.move(b.x+b.width/2,b.y+b.height/2,{steps:3});
  await page.waitForFunction(()=>!document.querySelector('#model').paused,null,{timeout:5000});
+ assert.equal(await page.locator('#play').getAttribute('aria-label'),'Pause');
+ assert.equal(await page.locator('#pauseIcon').isVisible(),true);
+ assert.equal(await page.locator('#playIcon').isVisible(),false);
  await page.waitForTimeout(2000);assert.equal(await page.locator('#model').evaluate(e=>e.paused),false,'holding the same target does not toggle it back');
  await page.mouse.move(1,100);await page.mouse.move(b.x+b.width/2,b.y+b.height/2,{steps:3});
  await page.waitForFunction(()=>document.querySelector('#model').paused,null,{timeout:5000});
+ assert.equal(await page.locator('#play').getAttribute('aria-label'),'Play');
+ assert.equal(await page.locator('#playIcon').isVisible(),true);
  await context.close();
 });
 
@@ -145,7 +157,9 @@ test('late camera permission after leaving releases all acquired tracks',async()
  await page.getByRole('button',{name:'Start camera',exact:true}).click();await page.waitForFunction(()=>window.releaseCamera);
  await page.evaluate(()=>{dispatchEvent(new Event('pagehide'));window.releaseCamera();});
  await page.waitForFunction(()=>window.pendingCamera.getTracks().every(t=>t.readyState==='ended'));
- assert.equal(await page.locator('#mirror').evaluate(e=>e.srcObject),null);await context.close();
+ assert.equal(await page.locator('#mirror').evaluate(e=>e.srcObject),null);
+ assert.equal(await page.evaluate(()=>localStorage.getItem('era.slp-videos.camera.v1')),null,'late permission is not saved as a configured camera');
+ await context.close();
 });
 
 test('Exit retains the shared bounded wait when a recording upload stalls',async()=>{
@@ -158,4 +172,43 @@ test('Exit retains the shared bounded wait when a recording upload stalls',async
  await page.locator('#barDoor').click();await handed;
  assert.equal(await page.locator('#mirror').evaluate(e=>e.srcObject),null);
  await page.getByText('Recording saved on this device.',{exact:true}).waitFor();await context.close();
+});
+
+test('camera setup survives reopening; explicit Stop camera opts out of automatic preview',async()=>{
+ const context=await browser.newContext({permissions:['camera','microphone']});const page=await context.newPage();
+ await page.addInitScript(()=>{
+  const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);window.cameraRequests=[];
+  navigator.mediaDevices.getUserMedia=constraints=>{window.cameraRequests.push(constraints);return original(constraints).catch(e=>{window.cameraError=e.name+': '+e.message;throw e;});};
+ });
+ await page.goto(base+'/slp-videos/');await page.getByRole('button',{name:'Partner controls',exact:true}).click();
+ await page.getByRole('button',{name:'Start camera',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#mirror').srcObject);
+ const choice=await page.locator('#cameraSelect option').evaluateAll(options=>options.find(o=>o.value)?.value);
+ assert.ok(choice);await page.locator('#cameraSelect').selectOption(choice);
+ await page.waitForFunction(()=>document.querySelector('#mirror').srcObject?.active);
+ await page.reload();
+ await page.waitForFunction(()=>document.querySelector('#mirror').srcObject?.active&&document.querySelector('#cameraStatus').textContent.startsWith('Live mirror'),null,{timeout:5000}).catch(async error=>{console.log(await page.evaluate(async()=>({error:window.cameraError,status:document.querySelector('#cameraStatus').textContent,savedMatchesAvailable:(await navigator.mediaDevices.enumerateDevices()).some(d=>d.deviceId===JSON.parse(localStorage.getItem('era.slp-videos.camera.v1')).deviceId)})));throw error;});
+ assert.equal(await page.evaluate(()=>window.cameraRequests.at(-1).video.deviceId.exact),await page.evaluate(()=>JSON.parse(localStorage.getItem('era.slp-videos.camera.v1')).deviceId));
+ assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('era.slp-videos.camera.v1')).deviceLabel),await page.locator('#mirror').evaluate(e=>e.srcObject.getVideoTracks()[0].label));
+ assert.equal(await page.evaluate(()=>window.cameraRequests.every(r=>r.audio===false)),true,'automatic mirror never starts the microphone');
+ assert.equal(await page.locator('#recordingBadge').isVisible(),false);
+ await page.getByRole('button',{name:'Partner controls',exact:true}).click();
+ await page.getByRole('button',{name:'Stop camera',exact:true}).click();await page.reload();
+ await page.waitForFunction(()=>document.querySelector('#sourceStatus').textContent.length>0);
+ assert.equal(await page.evaluate(()=>window.cameraRequests.length),0,'explicit Stop persists across reopening');
+ await context.close();
+});
+
+test('saved camera remains off while locked and starts only after unlocking',async()=>{
+ const context=await browser.newContext({permissions:['camera']});const page=await context.newPage();
+ await page.addInitScript(()=>{
+  localStorage.setItem('era.slp-videos.camera.v1',JSON.stringify({enabled:true,deviceId:''}));
+  localStorage.setItem('era.app-lock.v1.slp-videos',JSON.stringify({until:0}));
+  const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);window.cameraCalls=0;
+  navigator.mediaDevices.getUserMedia=constraints=>{window.cameraCalls++;return original(constraints);};
+ });
+ await page.goto(base+'/slp-videos/');await page.locator('.app-lock-curtain').waitFor();
+ assert.equal(await page.evaluate(()=>window.cameraCalls),0);
+ await page.evaluate(()=>window.AppLock.get('slp-videos').requestUnlock());
+ await page.waitForFunction(()=>document.querySelector('#mirror').srcObject?.active&&document.querySelector('#cameraStatus').textContent.startsWith('Live mirror'),null,{timeout:5000});
+ assert.equal(await page.evaluate(()=>window.cameraCalls),1);await context.close();
 });

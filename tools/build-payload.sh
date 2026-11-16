@@ -274,6 +274,8 @@ rem above ends the previous kiosk the hard way, and a browser that was not shut
 rem down cleanly offers to restore its tabs on the next start - never a bubble
 rem over a child's first tap.
 start "" "%B%" --force-device-scale-factor=1 --hide-crash-restore-bubble --kiosk "http://127.0.0.1:%PORT%%OPEN%" --edge-kiosk-type=fullscreen --user-data-dir="%~dp0data\kiosk-profile" --no-first-run --disable-pinch --overscroll-history-navigation=0 --autoplay-policy=no-user-gesture-required %CDP%
+rem Finish every fresh app launch in front, covering the taskbar without a touch.
+curl.exe -s -o NUL --max-time 2 -X POST http://127.0.0.1:%PORT%/kiosk/settle
 :done
 BAT
 cat > "$OUT/start-hub.sh" <<'SH'
