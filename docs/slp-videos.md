@@ -14,6 +14,8 @@ address. The camera preview is muted, so it does not feed sound back through
 the speakers. Once started successfully, the selected camera is remembered in
 this device's local Hub data and starts automatically on later openings,
 including a complete browser restart. Browser camera permission is still needed.
+After updating from a version that did not save camera setup, start and select
+the camera once to save it.
 **Stop camera** keeps it off on later openings until started again. A missing
 saved camera is never replaced by an arbitrary different camera. A denied or
 occupied camera leaves video viewing and Exit usable.
