@@ -596,20 +596,29 @@
   .reader-library-button { bottom: 12px; left: 16px; }
   .reader-next-button { top: 16px; right: 16px; }
 
+  /* right: the box overhangs its unscaled self by (5.625-1)/2 x 98.2px =
+     227px a side, so 4.75em (243px) puts its right edge 16px inside the
+     panel at ANY width — 11% left ~16px of the circle off a 1920 screen. */
   .reader-next-button-ready {
     top: 50%;
-    right: 11%;
+    right: 4.75em;
     transform: translateY(-50%) scale(5.625);
     transform-origin: center;
     overflow: visible;
   }
   /* Attention ring must HUG the dwell surface: the button's own box is the
-     gaze-activatable area, so the visible circle has to match it. */
+     gaze-activatable area (dwell.js targetAt() walks elementsFromPoint, and
+     this pointer-events:none ring is never on that stack), so the circle she
+     sees has to lie INSIDE it, ring line included (dad 11/17: "anytime you
+     get into it"). inset:0 + border-radius:50% is the ellipse inscribed in
+     the box (552x614 at 1920 — near enough a circle; a true circle would need
+     a wider box or a dead band), and the box's corners beyond it are live
+     too. Only the pulse's scale(1.08) swells past the box. */
   .reader-next-button-ready::before {
     content: '';
     position: absolute;
-    inset: -4%;
-    border-radius: 999px;
+    inset: 0;
+    border-radius: 50%;
     border: 2.5px solid var(--brand-coral);
     pointer-events: none;
     opacity: 0.5;
@@ -743,29 +752,33 @@
     z-index: 5;
     overflow: hidden;
   }
-  /* Ready arrow's dwell box is 15% taller than the corner box (2026-11-17):
-     glyph (1.45em of 3.2rem, line-height 1) + 0.243em of padding each side,
-     86.2px -> 99.1px unscaled, 485 -> 558px at 1920x1080. It stays centred
+  /* Ready arrow's dwell box is 1.15 x 1.10 = 1.265x taller than the corner
+     box (2026-11-17, twice): glyph (1.45em of 3.2rem, line-height 1) +
+     0.3403em of padding each side, 86.2px -> 109.1px unscaled, 485 -> 614px
+     at 1920x1080. It stays centred
      by top:50% + translateY(-50%), so it grows equally up and down; width is
      untouched. Must live on this selector: the plain-glyph rule above beats
      any weaker one (a min-height/padding rule on .dwell-button alone never
      applied). */
   .reader-next-button-ready.reader-nav-button.reader-overlay-button.dwell-button {
     overflow: visible;
-    padding-top: 0.243em;
-    padding-bottom: 0.243em;
+    padding-top: 0.3403em;
+    padding-bottom: 0.3403em;
   }
   /* Heavy ready glyph: the font is already weight 900, so a same-colour
-     stroke fattens shaft and head (~2.3x the shaft). The ink sits below the
+     stroke fattens shaft and head. 0.054em gave a 39px shaft at 1920; dad
+     asked for "a little thicker", 0.075em gives ~48px. The ink sits below the
      line box's middle; lift it so it is centred in the ring. No glow: the
      white text-shadow puts a pale rim round the thick stroke. */
   .reader-next-button-ready .reader-arrow {
     display: inline-block;
-    -webkit-text-stroke: 0.054em currentColor;
+    -webkit-text-stroke: 0.075em currentColor;
     transform: translateY(-0.162em);
     text-shadow: none;
   }
   .reader-nav-button .dwell-ring { border-radius: 999px; }
+  /* the dwell progress sweeps along the same ellipse as the attention ring */
+  .reader-next-button-ready .dwell-ring { border-radius: 50%; }
   .reader-prev-button {
     color: var(--ink);
     font-size: 3.2rem;
@@ -814,7 +827,9 @@
     .reader-bottom-overlay { padding: 12px; }
     .reader-status-row { flex-wrap: wrap; }
     .reader-text-box { font-size: 34px; }
-    .reader-next-button-ready { right: 84px; transform: translateY(-50%) scale(2.94); }
+    /* overhang (2.94-1)/2 x 98.2px = 95px a side: 2.17em (111px) keeps the
+       right edge 16px inside the panel (84px left ~11px of it off). */
+    .reader-next-button-ready { right: 2.17em; transform: translateY(-50%) scale(2.94); }
   }
   @media (max-width: 680px) {
     .reader-prev-button { top: 14px; left: 14px; }

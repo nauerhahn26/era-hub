@@ -178,6 +178,23 @@ async function shelfAt(width, height) {
   return m;
 }
 
+// The attention ring AT REST (the pulse's transform ignored): the ::before's
+// insets, resolved to px in the button's own unscaled box, mapped through the
+// button's scale about its centre into viewport px. Defined on window so both
+// page.evaluate bodies below can reach it.
+const RING_AT_REST = () => {
+  window.ringAtRest = (btn) => {
+    const b = btn.getBoundingClientRect();
+    const s = b.width / btn.offsetWidth;            // the scale(N) on the button
+    const cs = getComputedStyle(btn, "::before");
+    const L = parseFloat(cs.left), T = parseFloat(cs.top);
+    const R = parseFloat(cs.right), B = parseFloat(cs.bottom);
+    return { left: b.left + L * s, top: b.top + T * s,
+             right: b.right - R * s, bottom: b.bottom - B * s,
+             borderPx: parseFloat(cs.borderTopWidth) * s, radius: cs.borderTopLeftRadius };
+  };
+};
+
 async function readerAt(width, height) {
   const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1 });
   const page = await ctx.newPage();
@@ -186,6 +203,7 @@ async function readerAt(width, height) {
   await page.locator("#shelfGrid .shelf-card-button").first().click();
   await page.waitForSelector("#sRead.show");
   await page.waitForTimeout(200);
+  await page.evaluate(RING_AT_REST);
   const m = await page.evaluate(() => {
     const rect = (e) => { const b = e.getBoundingClientRect();
       return { w: +b.width.toFixed(2), h: +b.height.toFixed(2), x: +b.x.toFixed(2), y: +b.y.toFixed(2) }; };
@@ -208,7 +226,11 @@ async function readerAt(width, height) {
     const readyCy = +((b.top + b.bottom) / 2).toFixed(2);
     const frameCy = +((f.top + f.bottom) / 2).toFixed(2);
     const transform = getComputedStyle(next).transform;
-    return { small, ready, readyCy, frameCy, readyGlyph: glyph(next), transform, barH };
+    const ringBox = ringAtRest(next);
+    const box = { left: b.left, top: b.top, right: b.right, bottom: b.bottom };
+    const arrowFontPx = parseFloat(getComputedStyle(next.querySelector(".reader-arrow")).fontSize);
+    return { small, ready, readyCy, frameCy, readyGlyph: glyph(next), transform, barH,
+             ringBox, box, arrowFontPx, vw: innerWidth };
   });
   await ctx.close();
   return m;
@@ -281,9 +303,15 @@ test("page arrows at 1920x1080 CSS: 3.2rem corner glyphs, 5.625x ready-arrow", a
   // 2026-11-17 (dad, same change as the old app's c6f3186): the dwell box is
   // 15% TALLER than the old app's 485.07, grown equally up and down, and no
   // wider; the glyph is drawn heavy (same-colour stroke) with no glow.
-  assert.ok(Math.abs(m.ready.h - 485.07 * 1.15) < 3, `ready arrow height ${m.ready.h}, want 1.15 x 485.07 = 557.83`);
+  // 2026-11-17 again (dad on the device): ANOTHER 10% taller, 557.83 -> 613.61,
+  // still grown equally up and down about the same centre.
+  assert.ok(Math.abs(m.ready.h - 485.07 * 1.15 * 1.10) < 3,
+    `ready arrow height ${m.ready.h}, want 1.15 x 1.10 x 485.07 = 613.61`);
   assert.ok(Math.abs(m.ready.w - 552.57) < 1, `ready arrow width ${m.ready.w}, unchanged 552.57`);
   assert.ok(Math.abs(m.readyCy - 505) < 0.5, `ready arrow centre-y ${m.readyCy}, was 505 before it grew`);
+  // ...and the whole circle she sees is ON SCREEN: the box's right edge no
+  // longer runs off the panel (it sat ~16px past it).
+  assert.ok(m.box.right <= m.vw - 8, `ready arrow right edge ${m.box.right.toFixed(1)} on screen (< ${m.vw - 8})`);
 });
 
 // Shared by both viewport branches: the box grows 1.15x over the corner
@@ -292,20 +320,76 @@ test("page arrows at 1920x1080 CSS: 3.2rem corner glyphs, 5.625x ready-arrow", a
 // line (top:50% + translateY(-50%)), and the glyph is stroked and unglowed.
 function readyArrowLaw(m, scale) {
   const grew = m.ready.h / m.small.next.h;
-  assert.ok(Math.abs(grew - scale * 1.15) < 0.05,
-    `ready arrow grows ${scale} x 1.15 = ${(scale * 1.15).toFixed(3)}x, got ${grew.toFixed(3)}`);
+  assert.ok(Math.abs(grew - scale * 1.15 * 1.10) < 0.05,
+    `ready arrow grows ${scale} x 1.15 x 1.10 = ${(scale * 1.265).toFixed(3)}x, got ${grew.toFixed(3)}`);
   assert.ok(Math.abs(m.ready.w / m.small.next.w - scale) < 0.05,
     `ready arrow is no wider than ${scale}x the corner arrow, got ${(m.ready.w / m.small.next.w).toFixed(3)}`);
   assert.ok(Math.abs(m.readyCy - m.frameCy) < 0.5,
     `ready arrow centre-y ${m.readyCy} sits on the frame centre ${m.frameCy}`);
   assert.ok(m.readyGlyph.stroke > 0, `ready glyph carries a text stroke, got ${m.readyGlyph.stroke}`);
   assert.equal(m.readyGlyph.shadow, "none", "ready glyph has no glow (it rims the thick stroke)");
+  // dad 11/17: "a little thicker" again — the stroke beats the first heavy
+  // pass (0.054em of the glyph) by enough to grow the shaft ~1.25x.
+  const strokeEm = m.readyGlyph.stroke / m.arrowFontPx;
+  assert.ok(strokeEm > 0.054 + 0.015, `ready glyph stroke ${strokeEm.toFixed(4)}em, want thicker than 0.054em`);
+  // THE WHOLE CIRCLE IS THE BUTTON: the attention ring she sees, at rest,
+  // lies inside the button's own box — the box is what dwell.js hit-tests
+  // (elementsFromPoint), and a ring drawn outside it is a dead band.
+  assert.ok(m.box.right <= m.vw - 8, `ready arrow right edge ${m.box.right.toFixed(1)} on screen (< ${m.vw - 8})`);
+  const r = m.ringBox, b = m.box;
+  assert.ok(r.left >= b.left - 0.5 && r.top >= b.top - 0.5 && r.right <= b.right + 0.5 && r.bottom <= b.bottom + 0.5,
+    `ring at rest ${JSON.stringify(r)} must lie within the button box ${JSON.stringify(b)}`);
 }
 
-test("ready-arrow at 900x700 CSS (the <=900px branch): scale 2.94, the same 15% taller box", async () => {
+test("ready-arrow at 900x700 CSS (the <=900px branch): scale 2.94, the same 1.15 x 1.10 taller box", async () => {
   const m = await readerAt(900, 700);
   assert.match(m.transform, /^matrix\(2\.94, 0, 0, 2\.94,/, `ready-arrow transform ${m.transform}`);
   readyArrowLaw(m, 2.94);
+});
+
+// "Anytime you get into it" (dad 11/17): every point inside the ring she sees
+// must count as being on the arrow — for her eyes AND for a finger or mouse.
+// Points just inside the ring at top, bottom, left, right and the four 45°
+// diagonals (inside the ellipse the ring encloses) are resolved exactly the
+// way era-core's dwell.js targetAt() resolves them: the first .dwell without
+// [data-dwell-disabled] on the elementsFromPoint stack. Then a REAL mouse
+// click at the top edge point turns the page.
+test("the whole ring is live: gaze targetAt and a real click inside the ring's edge hit the ready arrow", async () => {
+  const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 });
+  const page = await ctx.newPage();
+  await page.goto(BASE + "/reader/", { waitUntil: "networkidle" });
+  await page.waitForSelector("#shelfGrid .shelf-card-button");
+  await page.locator("#shelfGrid .shelf-card-button").first().click();
+  await page.waitForSelector("#btnNext.reader-next-button-ready");
+  await page.waitForTimeout(200);
+  await page.evaluate(RING_AT_REST);
+  const probe = await page.evaluate(() => {
+    const next = document.getElementById("btnNext");
+    const r = window.ringAtRest(next);
+    const cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2;
+    // 6px inside the ring's outer edge: on the ring line itself
+    const rx = (r.right - r.left) / 2 - 6, ry = (r.bottom - r.top) / 2 - 6;
+    const targetAt = (x, y) => {           // == era-core dwell.js targetAt()
+      for (const e of document.elementsFromPoint(x, y)) {
+        const hit = e && e.closest && e.closest(".dwell:not([data-dwell-disabled])");
+        if (hit) return hit;
+      }
+      return null;
+    };
+    const pts = [0, 45, 90, 135, 180, 225, 270, 315].map((deg) => {
+      const a = deg * Math.PI / 180;
+      const x = cx + rx * Math.cos(a), y = cy - ry * Math.sin(a);
+      const t = targetAt(x, y);
+      return { deg, x: +x.toFixed(1), y: +y.toFixed(1), id: t ? t.id : null };
+    });
+    return { pts, top: { x: cx, y: cy - ry }, page: window.Reader.state().page };
+  });
+  for (const p of probe.pts)
+    assert.equal(p.id, "btnNext", `inside the ring at ${p.deg}° (${p.x},${p.y}) the dwell target is ${p.id}`);
+  assert.equal(probe.page, 0);
+  await page.mouse.click(probe.top.x, probe.top.y);
+  await page.waitForFunction(() => window.Reader.state().page === 1, null, { timeout: 3000 });
+  await ctx.close();
 });
 
 // The harness guard on SEAMS itself. A name no hub file reads LOOKS like a
