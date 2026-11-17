@@ -28,6 +28,9 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "era-watch-ui-"));
 const WEEK = "2026-01-05", ID = "aBcDeFgHiJk", QID = "aBcDeFgHiJq";
 const GRID = `${BASE}/board/?recipe=this-week&board=watch`;
+// a past week (spec 2026-11-17): its video returns to its own Watch ring
+const PAST = "2025-12-29";
+const PAST_GRID = `${BASE}/board/?recipe=this-week&board=w-${PAST}-watch`;
 const SHOTS = process.env.ERA_SHOTS || "";
 const BEFORE = { id: "aBcDeFgHiJb", skill: "compare", q: "Which one makes a shadow?",
   choices: [{ label: "A torch", glyph: "🔦", right: true }, { label: "A cloud", glyph: "☁️" }] };
@@ -45,6 +48,12 @@ before(async () => {
   fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify({
     week_of: WEEK, title: "Shadows!", topic: "shadows", schema: 1,
     watch: [video(QID, 0, { before: BEFORE }), video(ID, 1, { before: null })], talk: [], play: { which: [] } }));
+  const pdir = path.join(TMP, "this-week", PAST);
+  fs.mkdirSync(pdir, { recursive: true });
+  fs.copyFileSync(path.join(HUB, "tests", "fixtures", "this-week-1s.mp4"), path.join(pdir, ID + ".mp4"));
+  fs.writeFileSync(path.join(pdir, "manifest.json"), JSON.stringify({
+    week_of: PAST, title: "Rain!", topic: "rain", schema: 1,
+    watch: [video(ID, 0, { before: null })], talk: [], play: { which: [] } }));
   fs.writeFileSync(path.join(TMP, "app-settings.json"), JSON.stringify({ musicVolCap: 40 }));
   child = spawn("node", ["server.js", String(PORT)], {
     cwd: HUB, stdio: ["ignore", "inherit", "inherit"],
@@ -240,6 +249,23 @@ test("Back goes to the Watch grid", async () => {
     await playing(page);
     await Promise.all([page.waitForURL(GRID, { waitUntil: "commit" }), dwellOn(page, "#btnBack")]);
   } finally { await closeContext(ctx); }
+});
+
+test("a past week's video: ended, Back and a broken id all return to that week's own Watch ring", async () => {
+  let { ctx, page, logs } = await watchPage(`?w=${PAST}&v=${ID}`);
+  try {
+    await page.waitForURL(PAST_GRID, { waitUntil: "commit", timeout: 8000 });
+    assert.deepEqual(events(logs), ["open", "ended"]);
+    assert.equal(logs[0].week_of, PAST);
+  } finally { await closeContext(ctx); }
+  ({ ctx, page } = await watchPage(`?w=${PAST}&v=${ID}`, { slow: true }));
+  try {
+    await playing(page);
+    await Promise.all([page.waitForURL(PAST_GRID, { waitUntil: "commit" }), dwellOn(page, "#btnBack")]);
+  } finally { await closeContext(ctx); }
+  ({ ctx, page } = await watchPage(`?w=${PAST}&v=ZZZZZZZZZZZ`));
+  try { await page.waitForURL(PAST_GRID, { waitUntil: "commit", timeout: 4000 }); }
+  finally { await closeContext(ctx); }
 });
 
 test("bad params: no video source, nothing logged, the Watch grid after about a second", async () => {

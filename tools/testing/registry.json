@@ -197,6 +197,28 @@
       "owner": ""
     },
     {
+      "id": "era-board:tests/board-label-fit.test.mjs",
+      "purpose": "Long single-word labels on glyph tiles shrink to the tile width instead of clipping",
+      "group": "board",
+      "dependencies": [
+        "era-board/**"
+      ],
+      "lane": "linux",
+      "resources": [
+        "shared-hub",
+        "browser"
+      ],
+      "level": "browser integration",
+      "hub": "shared-reader",
+      "ports": [],
+      "browsers": 1,
+      "heavy": false,
+      "solo": false,
+      "quiet": false,
+      "retry": false,
+      "owner": ""
+    },
+    {
       "id": "era-board:tests/board-lock.test.mjs",
       "purpose": "Touch-only media lock, cross-tab persistence, passcodes and exit availability",
       "group": "board",
@@ -5181,6 +5203,7 @@
         "era-board:tests/board-edit.test.mjs",
         "era-board:tests/board-events.test.mjs",
         "era-board:tests/board-input.test.mjs",
+        "era-board:tests/board-label-fit.test.mjs",
         "era-board:tests/board-lock.test.mjs",
         "era-board:tests/board-model.test.mjs",
         "era-board:tests/board-movies.test.mjs",
@@ -5344,6 +5367,7 @@
         "era-board:tests/board-edit.test.mjs",
         "era-board:tests/board-events.test.mjs",
         "era-board:tests/board-input.test.mjs",
+        "era-board:tests/board-label-fit.test.mjs",
         "era-board:tests/board-lock.test.mjs",
         "era-board:tests/board-model.test.mjs",
         "era-board:tests/board-movies.test.mjs",
