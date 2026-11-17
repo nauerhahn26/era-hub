@@ -3,7 +3,8 @@
  *
  * /play/?w=<week_of> reads GET /this-week/<w>/play.json (the hub validated it; the page never
  * reads the raw manifest) and opens the MENU: the shared door bar, Back in the rail (to the This
- * week board), and up to three engine tiles in the triangle (§5.6 amended 2026-10-25), two rows of
+ * week board — the past week's own board for a past week, play.json's back.board, spec 2026-11-17
+ * §5), and up to three engine tiles in the triangle (§5.6 amended 2026-10-25), two rows of
  * three seats — Which one? top-left, Sort it top-right, Play it bottom-centre, black in the other
  * three; an engine with no content this week has no tile, its seat black. A 404 or a bad
  * w: the menu with no engine tiles and "Nothing to play yet", said once.
@@ -28,7 +29,8 @@ import { mountPlayit } from "./playit.js";
 
 const appLocked = () => window.AppLock?.isLocked() || false;
 const WEEK_RE = /^\d{4}-\d{2}-\d{2}$/;
-const BOARD = "/board/?recipe=this-week";
+let BOARD = "/board/?recipe=this-week";
+const BOARD_RE = /^[a-z0-9-]{1,64}$/;   // the board's own ?board= rule
 const PAGES = ["menu", "which", "sort", "playit"];
 const PLAYIT_GLYPH = { "harmonica": "🎵", "xylophone": "🎵", "string-telephone": "☎️", "shadow-puppet": "🔦" };
 const $ = (id) => document.getElementById(id);
@@ -246,6 +248,8 @@ async function boot() {
       if (r.ok) {
         const j = await r.json();
         if (j && j.play && Array.isArray(j.play.which)) S.data = j;
+        const b = j && j.back && j.back.board;
+        if (typeof b === "string" && BOARD_RE.test(b) && b !== "this-week") BOARD += "&board=" + b;
       }
     } catch { /* nothing to play */ }
   }
