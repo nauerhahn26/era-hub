@@ -743,7 +743,28 @@
     z-index: 5;
     overflow: hidden;
   }
-  .reader-next-button-ready.reader-nav-button.reader-overlay-button.dwell-button { overflow: visible; }
+  /* Ready arrow's dwell box is 15% taller than the corner box (2026-11-17):
+     glyph (1.45em of 3.2rem, line-height 1) + 0.243em of padding each side,
+     86.2px -> 99.1px unscaled, 485 -> 558px at 1920x1080. It stays centred
+     by top:50% + translateY(-50%), so it grows equally up and down; width is
+     untouched. Must live on this selector: the plain-glyph rule above beats
+     any weaker one (a min-height/padding rule on .dwell-button alone never
+     applied). */
+  .reader-next-button-ready.reader-nav-button.reader-overlay-button.dwell-button {
+    overflow: visible;
+    padding-top: 0.243em;
+    padding-bottom: 0.243em;
+  }
+  /* Heavy ready glyph: the font is already weight 900, so a same-colour
+     stroke fattens shaft and head (~2.3x the shaft). The ink sits below the
+     line box's middle; lift it so it is centred in the ring. No glow: the
+     white text-shadow puts a pale rim round the thick stroke. */
+  .reader-next-button-ready .reader-arrow {
+    display: inline-block;
+    -webkit-text-stroke: 0.054em currentColor;
+    transform: translateY(-0.162em);
+    text-shadow: none;
+  }
   .reader-nav-button .dwell-ring { border-radius: 999px; }
   .reader-prev-button {
     color: var(--ink);
@@ -762,7 +783,6 @@
   .reader-library-button.dwell-button,
   .reader-read-button.dwell-button { min-width: 104px; border-radius: 999px; font-size: 0.98rem; }
   .reader-read-button { position: static; }
-  .reader-next-button-ready.dwell-button { min-width: 84px; min-height: 84px; padding: 16px; }
 
   /* End-of-book: the Library button grows 5x at the left-center of the
      stage and pulses gently (same ring language as the ready next-arrow)
