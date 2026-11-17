@@ -9,7 +9,9 @@
  *     glyph follow the video), a black rest box;
  *   - the video filling the rest, letterboxed on black, its volume musicVolCap / 100.
  * Ended -> log, then the Watch grid. Cannot play -> log, a second, the Watch grid. Bad params ->
- * the Watch grid after a second, so a broken tile never strands her.
+ * the Watch grid after a second, so a broken tile never strands her. "The Watch grid" is the one
+ * the video came from (spec 2026-11-17 §5): play.json's back.watch names it — `watch` for the
+ * current week, `w-<week_of>-watch` for a past one; until it answers, the current week's.
  *
  * `before` (§5.4): play.json's before[<id>] is one Which-one item, mounted with the Play app's
  * which.js over the video area first (the video there, paused and hidden; the Pause tile rests),
@@ -31,7 +33,8 @@ import { mountWhich } from "../play/which.js";
 const appLocked = () => window.AppLock?.isLocked() || false;
 const WEEK_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ID_RE = /^[A-Za-z0-9_-]{11}$/;
-const GRID = "/board/?recipe=this-week&board=watch";
+const BOARD_RE = /^[a-z0-9-]{1,64}$/;   // the board's own ?board= rule
+let GRID = "/board/?recipe=this-week&board=watch";
 const $ = (id) => document.getElementById(id);
 
 const q = new URLSearchParams(location.search);
@@ -183,7 +186,14 @@ async function boot() {
   video.src = "/this-week/" + week_of + "/" + id + ".mp4";
   const settings = fetch("/settings").then((r) => r.json()).catch(() => null);
   const playJson = fetch("/this-week/" + week_of + "/play.json", { cache: "no-store" })
-    .then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    .then((r) => (r.ok ? r.json() : null)).catch(() => null)
+    .then((pj) => {
+      // the way back, as soon as it is known (a video can fail before settings answer)
+      const b = pj && pj.back && pj.back.watch;
+      if (typeof b === "string" && BOARD_RE.test(b))
+        GRID = "/board/?recipe=this-week" + (b === "this-week" ? "" : "&board=" + b);
+      return pj;
+    });
   const st = await settings;
   if (st) {
     if (Number.isFinite(st.dwellMs) && st.dwellMs > 0) {

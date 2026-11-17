@@ -14,10 +14,12 @@
 // same rules here and drops a failing ITEM (listed in `dropped`), never the
 // page — one bad word must not take Ellie's board away.
 "use strict";
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
-const THIS_WEEK_REV = 3;   // 2: the Play door (spec 2026-10-12 §5.6); 3: the small boards (spec §1, §3.4)
+const THIS_WEEK_REV = 4;   // 2: the Play door (spec 2026-10-12 §5.6); 3: the small boards (spec §1, §3.4);
+                           // 4: Past weeks (spec 2026-11-17)
 const WEEK_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ID_RE = /^[A-Za-z0-9_-]{11}$/;
 const SYMBOL_RE = /^[a-z0-9-]{1,32}$/;
@@ -35,6 +37,8 @@ const SKILLS = ["predict", "compare", "cause", "classify", "sequence", "true-fal
                 "count", "add", "subtract", "decode", "rhyme", "vocabulary"];
 const POSITIONS = { "harmonica": 10, "xylophone": 10, "string-telephone": 2, "shadow-puppet": 2 };
 const MAX_WHICH = 10, MAX_Q = 160, MAX_LABEL = 40;
+// Past weeks (spec 2026-11-17): the newest 52 older weeks, eight a page in the Talk seats.
+const MAX_PAST = 52, PAST_GLYPH = "🗓️";
 
 const isStr = (s) => typeof s === "string" && s.trim() !== "";
 
@@ -195,32 +199,70 @@ function playJson(dataDir, week_of) {
   let manifest;
   try { ({ manifest } = validate(raw)); } catch { return null; }
   const { play, before, dropped } = validatePlay(manifest);
-  return { week_of, title: manifest.title, play, before, dropped };
+  return { week_of, title: manifest.title, play, before, dropped, back: backFor(dataDir, week_of) };
+}
+
+// Where /watch/ and /play/ return for this week (spec 2026-11-17 §5): the
+// current week's Watch ring / root as ever, a listed past week's own boards,
+// and the root for a week with no board of its own (too old, or unlisted).
+// The board builds the /watch/ URL itself, so the page asks here, not the URL.
+function backFor(dataDir, week_of) {
+  let weeks = [];
+  try { weeks = readWeeks(dataDir); } catch {}
+  const i = weeks.findIndex(w => w.week_of === week_of);
+  if (i === 0) return { watch: "watch", board: ROOT };
+  if (i > 0) return { watch: "w-" + week_of + "-watch", board: "w-" + week_of };
+  return { watch: ROOT, board: ROOT };
 }
 
 // Newest <YYYY-MM-DD> folder holding a parseable manifest.json, or null.
 // A newer folder whose manifest is mid-write (unparseable) is skipped; one that
 // parses but carries a book's keys is refused (thrown), not skipped — a week
 // that silently fell back to last week's board would hide the mistake.
+function weekNames(dataDir) {
+  try { return fs.readdirSync(path.join(dataDir, "this-week")).filter(n => WEEK_RE.test(n)).sort().reverse(); }
+  catch { return []; }
+}
+// One folder's parsed manifest + stat, or null (none yet, or mid-write).
+function loadRaw(dataDir, week_of) {
+  const dir = path.join(dataDir, "this-week", week_of);
+  const mp = path.join(dir, "manifest.json");
+  try {
+    const st = fs.statSync(mp);
+    if (!st.isFile()) return null;
+    return { week_of, manifest: JSON.parse(fs.readFileSync(mp, "utf8")), dir, mtimeMs: st.mtimeMs, size: st.size };
+  } catch { return null; }
+}
 function readWeek(dataDir) {
-  const root = path.join(dataDir, "this-week");
-  let names;
-  try { names = fs.readdirSync(root); } catch { return null; }
-  names = names.filter(n => WEEK_RE.test(n)).sort().reverse();
-  for (const week_of of names) {
-    const dir = path.join(root, week_of);
-    const mp = path.join(dir, "manifest.json");
-    let st, manifest;
-    try {
-      st = fs.statSync(mp);
-      if (!st.isFile()) continue;
-      manifest = JSON.parse(fs.readFileSync(mp, "utf8"));
-    } catch { continue; }
+  for (const week_of of weekNames(dataDir)) {
+    const raw = loadRaw(dataDir, week_of);
+    if (!raw) continue;
+    const manifest = raw.manifest;
     if (manifest && typeof manifest === "object" && ("pages" in manifest || "cover" in manifest))
       throw new Error("week " + week_of + ": manifest uses pages/cover");
-    return { week_of, manifest, dir, mtimeMs: st.mtimeMs, size: st.size };
+    return raw;
   }
   return null;
+}
+
+// Every week the board lists, newest first, each with a VALIDATED manifest:
+// [current (readWeek's pick, and its throw), ...up to MAX_PAST older weeks].
+// A past week that is missing, unparseable or fails validate() is left out —
+// an old broken folder must never take the current week's board away.
+function readWeeks(dataDir) {
+  const cur = readWeek(dataDir);
+  if (!cur) return [];
+  const v = validate(cur.manifest);
+  const out = [{ ...cur, manifest: v.manifest, dropped: v.dropped }];
+  for (const week_of of weekNames(dataDir)) {
+    if (out.length > MAX_PAST) break;
+    if (week_of >= cur.week_of) continue;
+    const raw = loadRaw(dataDir, week_of);
+    if (!raw) continue;
+    try { const p = validate(raw.manifest); out.push({ ...raw, manifest: p.manifest, dropped: p.dropped }); }
+    catch { /* left out of the list */ }
+  }
+  return out;
 }
 
 // ready = <id>.mp4 with bytes; ext = the first thumbnail present (no dot).
@@ -234,14 +276,24 @@ function videoState(dir, id) {
   return { ready: size > 0, ext, size };
 }
 
-// "<manifest mtime>-<size>-<ready bits hex, watch order>-r<REV>", quoted.
-function etagFor(week, ready) {
+// "<manifest mtime>-<size>-<ready bits hex, watch order>[-p<hash of past weeks>]-r<REV>",
+// quoted. past = [{week_of, mtimeMs, size, manifest, ready}]: a newly mirrored
+// past video, or a past week arriving, refreshes the board too (spec 2026-11-17).
+function weekBits(week, ready) {
   const bits = (week.manifest.watch || []).map(v => (ready[v.id] && ready[v.id].ready) ? "1" : "0").join("");
-  const hex = bits ? BigInt("0b" + bits).toString(16) : "0";
-  return '"' + Math.floor(week.mtimeMs || 0) + "-" + (week.size || 0) + "-" + hex + "-r" + THIS_WEEK_REV + '"';
+  return Math.floor(week.mtimeMs || 0) + "-" + (week.size || 0) + "-" + (bits ? BigInt("0b" + bits).toString(16) : "0");
+}
+function etagFor(week, ready, past) {
+  let p = "";
+  if (past && past.length) {
+    const h = crypto.createHash("sha1");
+    for (const w of past) h.update(w.week_of + ":" + weekBits(w, w.ready || {}) + ";");
+    p = "-p" + h.digest("hex").slice(0, 12);
+  }
+  return '"' + weekBits(week, ready) + p + "-r" + THIS_WEEK_REV + '"';
 }
 
-const backCell = () => ({ label: "Back", say: "back", type: "back", glyph: "←", load: ROOT, row: 1, col: 1 });
+const backCell = (load = ROOT) => ({ label: "Back", say: "back", type: "back", glyph: "←", load, row: 1, col: 1 });
 
 // The root-only board: no week on disk, or a broken one. Valid and alive.
 function emptyRecipe() {
@@ -249,23 +301,11 @@ function emptyRecipe() {
            boards: [{ id: ROOT, name: "This week", rows: 2, columns: 3, buttons: [] }] };
 }
 
-// week = readWeek()'s answer with a VALIDATED manifest; ready = {id: videoState}.
-function recipe(week, ready) {
-  ready = ready || {};
-  const m = week.manifest, title = m.title;
-  const boards = [];
-  // the root is the 2×3 triangle (spec §1): two doors up, Play below, black between
-  boards.push({ id: ROOT, name: title, rows: 2, columns: 3, buttons: [
-    { type: "show", board: "watch", label: "Watch", say: "watch", glyph: "🎬", row: 1, col: 1,
-      say_on_load: "This week: " + title },
-    { type: "show", board: "talk-1", label: "Talk", say: "talk", glyph: "💬", row: 1, col: 3 },
-  ] });
-  // the Play door (spec §5.6): a same-origin link, only when an engine has content
-  if (playHasContent(validatePlay(m).play))
-    boards[0].buttons.push({ type: "link", href: "/play/?w=" + week.week_of, label: "Play", say: "play",
-                             glyph: "🎲", row: 2, col: 2 });
-  const watch = [backCell()];
-  m.watch.slice(0, WATCH_SEATS.length).forEach((v, i) => {
+// The Watch ring and the Talk pages, the same for the current week and a past
+// one: only the board ids and where Back goes differ (spec 2026-11-17 §4).
+function watchBoard(id, back, week, ready) {
+  const watch = [backCell(back)];
+  week.manifest.watch.slice(0, WATCH_SEATS.length).forEach((v, i) => {
     const [row, col] = WATCH_SEATS[i];
     const s = ready[v.id];
     if (s && s.ready) {
@@ -278,11 +318,14 @@ function recipe(week, ready) {
     } else
       watch.push({ type: "word", label: v.title, say: "not here yet", glyph: "⏳", row, col });
   });
-  boards.push({ id: "watch", name: "Watch", rows: 3, columns: 3, buttons: watch });
+  return { id, name: "Watch", rows: 3, columns: 3, buttons: watch };
+}
+function talkBoards(prefix, back, m) {
+  const boards = [];
   const per = TALK_SEATS.length;
   const pages = Math.max(1, Math.ceil(m.talk.length / per));
   for (let p = 0; p < pages; p++) {
-    const buttons = [backCell()];
+    const buttons = [backCell(back)];
     m.talk.slice(p * per, (p + 1) * per).forEach((t, i) => {
       const [row, col] = TALK_SEATS[i];
       const c = { type: "word", label: t.word, say: t.say };
@@ -291,28 +334,107 @@ function recipe(week, ready) {
       buttons.push(c);
     });
     if (p < pages - 1)
-      buttons.push({ label: "More", type: "control", symbol: "more", load: "talk-" + (p + 2), row: 3, col: 1 });
-    boards.push({ id: "talk-" + (p + 1), name: "Talk", rows: 3, columns: 4, buttons });
+      buttons.push({ label: "More", type: "control", symbol: "more", load: prefix + "talk-" + (p + 2), row: 3, col: 1 });
+    boards.push({ id: prefix + "talk-" + (p + 1), name: "Talk", rows: 3, columns: 4, buttons });
   }
-  return { recipe: { locale: "en-US", root: ROOT, home_label: "This week", boards },
-           etag: etagFor(week, ready) };
+  return boards;
 }
 
+// A past week's one picture: its hero word's glyph, else its first science
+// word's glyph, else the calendar (spec 2026-11-17 §2).
+function weekGlyph(m) {
+  const by = (g) => m.talk.find(t => t.group === g && t.glyph);
+  const t = by("hero") || by("science");
+  return t ? t.glyph : PAST_GLYPH;
+}
+
+// past = [{week_of, manifest (validated), ready}], newest first: the Past weeks
+// pages (Talk mould, eight a page) and each week's corner board + its doors.
+function pastBoards(past) {
+  const boards = [];
+  const per = TALK_SEATS.length;
+  const pages = Math.ceil(past.length / per);
+  const listed = [];
+  for (let p = 0; p < pages; p++) {
+    const buttons = [backCell()];
+    past.slice(p * per, (p + 1) * per).forEach((w, i) => {
+      const [row, col] = TALK_SEATS[i];
+      // a door that says the week's title as it opens it (board-model's boolean say_on_load)
+      buttons.push({ type: "word", label: w.manifest.title, say: w.manifest.title, glyph: weekGlyph(w.manifest),
+                     load: "w-" + w.week_of, say_on_load: true, row, col });
+      listed.push({ w, page: "past-" + (p + 1) });
+    });
+    if (p < pages - 1)
+      buttons.push({ label: "More", type: "control", symbol: "more", load: "past-" + (p + 2), row: 3, col: 1 });
+    boards.push({ id: "past-" + (p + 1), name: "Past weeks", rows: 3, columns: 4, buttons });
+  }
+  for (const { w, page } of listed) {
+    const id = "w-" + w.week_of, m = w.manifest;
+    // a 3×3 with the doors in the corners, so each has black neighbours
+    const buttons = [
+      backCell(page),
+      { type: "show", board: id + "-watch", label: "Watch", say: "watch", glyph: "🎬", row: 1, col: 3,
+        say_on_load: m.title },
+    ];
+    if (playHasContent(validatePlay(m).play))
+      buttons.push({ type: "link", href: "/play/?w=" + w.week_of, label: "Play", say: "play", glyph: "🎲", row: 3, col: 1 });
+    buttons.push({ type: "show", board: id + "-talk-1", label: "Talk", say: "talk", glyph: "💬", row: 3, col: 3 });
+    boards.push({ id, name: m.title, rows: 3, columns: 3, buttons });
+    boards.push(watchBoard(id + "-watch", id, w, w.ready || {}));
+    boards.push(...talkBoards(id + "-", id, m));
+  }
+  return boards;
+}
+
+// week = readWeek()'s answer with a VALIDATED manifest; ready = {id: videoState};
+// past = readWeeks()'s older weeks, each with its own `ready` (optional).
+function recipe(week, ready, past) {
+  ready = ready || {};
+  past = past || [];
+  const m = week.manifest, title = m.title;
+  const boards = [];
+  // the root is the 2×3 triangle (spec §1): two doors up, Play below, black between
+  boards.push({ id: ROOT, name: title, rows: 2, columns: 3, buttons: [
+    { type: "show", board: "watch", label: "Watch", say: "watch", glyph: "🎬", row: 1, col: 1,
+      say_on_load: "This week: " + title },
+    { type: "show", board: "talk-1", label: "Talk", say: "talk", glyph: "💬", row: 1, col: 3 },
+  ] });
+  // the Play door (spec §5.6): a same-origin link, only when an engine has content
+  if (playHasContent(validatePlay(m).play))
+    boards[0].buttons.push({ type: "link", href: "/play/?w=" + week.week_of, label: "Play", say: "play",
+                             glyph: "🎲", row: 2, col: 2 });
+  // the fourth door the triangle reserved (spec 2026-11-17 §1): only with a past week
+  if (past.length)
+    boards[0].buttons.push({ type: "show", board: "past-1", label: "Past weeks", say: "past weeks",
+                             glyph: PAST_GLYPH, row: 2, col: 1 });
+  boards.push(watchBoard("watch", ROOT, week, ready));
+  boards.push(...talkBoards("", ROOT, m));
+  boards.push(...pastBoards(past));
+  return { recipe: { locale: "en-US", root: ROOT, home_label: "This week", boards },
+           etag: etagFor(week, ready, past) };
+}
+
+const readyOf = (w) => {
+  const ready = {};
+  for (const v of w.manifest.watch) ready[v.id] = videoState(w.dir, v.id);
+  return ready;
+};
+
 // Everything a request needs, never throwing: {recipe, etag, week, dropped, error}.
+// `week`, `ready` and `dropped` are the current week's (the download rail reads them).
 function build(dataDir) {
   try {
-    const raw = readWeek(dataDir);
-    if (!raw) return { recipe: emptyRecipe(), etag: '"none-r3"', week: null, dropped: [] };
-    const { manifest, dropped } = validate(raw.manifest);
-    const week = { ...raw, manifest };
-    const ready = {};
-    for (const v of manifest.watch) ready[v.id] = videoState(raw.dir, v.id);
-    const out = recipe(week, ready);
+    const weeks = readWeeks(dataDir);
+    if (!weeks.length) return { recipe: emptyRecipe(), etag: '"none-r' + THIS_WEEK_REV + '"', week: null, dropped: [] };
+    const { dropped, ...week } = weeks[0];
+    const ready = readyOf(week);
+    const past = weeks.slice(1).map(w => ({ ...w, ready: readyOf(w) }));
+    const out = recipe(week, ready, past);
     return { ...out, week, ready, dropped };
   } catch (e) {
     return { recipe: emptyRecipe(), etag: '"err-' + Date.now() + '"', week: null, dropped: [], error: e.message };
   }
 }
 
-module.exports = { THIS_WEEK_REV, readWeek, validate, validatePlay, playJson, recipe, videoState, etagFor, build, emptyRecipe,
+module.exports = { THIS_WEEK_REV, readWeek, readWeeks, validate, validatePlay, playJson, recipe, videoState, etagFor, build, emptyRecipe,
                    WATCH_SEATS, TALK_SEATS, THUMB_EXT };

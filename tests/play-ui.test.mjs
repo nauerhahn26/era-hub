@@ -282,8 +282,18 @@ test("a week that does not exist (or a bad w): the menu with 'Nothing to play ye
   }
 });
 
-test("Back on the menu goes to the This week board", async () => {
-  const { ctx, page } = await playPage();
+test("Back on the menu goes to the This week board; on a past week, to that week's own board", async () => {
+  // ALL_WEEK is the newest folder, the current week: the root, as ever
+  let { ctx, page } = await playPage({ query: "?w=" + ALL_WEEK });
+  await Promise.all([page.waitForURL(`${BASE}/board/?recipe=this-week`, { waitUntil: "commit" }), page.locator("#btnBack").click()]);
+  await ctx.close();
+  // WEEK is older: a past week (spec 2026-11-17 §5) — play.json's back.board
+  ({ ctx, page } = await playPage());
+  await Promise.all([page.waitForURL(`${BASE}/board/?recipe=this-week&board=w-${WEEK}`, { waitUntil: "commit" }),
+                     page.locator("#btnBack").click()]);
+  await ctx.close();
+  // no such week: the root
+  ({ ctx, page } = await playPage({ query: "?w=2026-02-02" }));
   await Promise.all([page.waitForURL(`${BASE}/board/?recipe=this-week`, { waitUntil: "commit" }), page.locator("#btnBack").click()]);
   await ctx.close();
 });
