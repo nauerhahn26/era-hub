@@ -195,13 +195,20 @@ async function readerAt(width, height) {
     // a silent fixture page is "ready" the moment it opens, so drop the ready
     // classes to measure the ordinary corner arrow first.
     next.classList.remove("reader-next-button-ready", "reader-next-button-pulse");
+    const glyph = (b) => { const s = getComputedStyle(b.querySelector(".reader-arrow"));
+      return { stroke: parseFloat(s.webkitTextStrokeWidth) || 0, shadow: s.textShadow }; };
     const small = { prev: rect(prev), next: rect(next),
                     fontSize: getComputedStyle(next).fontSize,
-                    arrowFontSize: getComputedStyle(next.querySelector(".reader-arrow")).fontSize };
+                    arrowFontSize: getComputedStyle(next.querySelector(".reader-arrow")).fontSize,
+                    prevGlyph: glyph(prev), nextGlyph: glyph(next) };
     next.classList.add("reader-next-button-ready", "reader-next-button-pulse");
     const ready = rect(next);
+    const b = next.getBoundingClientRect();
+    const f = document.querySelector(".reader-image-frame").getBoundingClientRect();
+    const readyCy = +((b.top + b.bottom) / 2).toFixed(2);
+    const frameCy = +((f.top + f.bottom) / 2).toFixed(2);
     const transform = getComputedStyle(next).transform;
-    return { small, ready, transform, barH };
+    return { small, ready, readyCy, frameCy, readyGlyph: glyph(next), transform, barH };
   });
   await ctx.close();
   return m;
@@ -262,12 +269,43 @@ test("page arrows at 1920x1080 CSS: 3.2rem corner glyphs, 5.625x ready-arrow", a
     `prev arrow 16px below the ${m.barH}px bar`);
   assert.ok(Math.abs(m.small.next.x + m.small.next.w - (1920 - 16)) < 1, "next arrow 16px from the right edge");
 
+  // corner arrows stay plain: no stroke, the white glow kept.
+  for (const g of [m.small.prevGlyph, m.small.nextGlyph]) {
+    assert.equal(g.stroke, 0, "corner arrows carry no text stroke");
+    assert.notEqual(g.shadow, "none", "corner arrows keep their white glow");
+  }
+
   // the big "she may turn the page now" arrow: scale(5.625), never bigger.
   assert.match(m.transform, /^matrix\(5\.625, 0, 0, 5\.625,/, `ready-arrow transform ${m.transform}`);
+  readyArrowLaw(m, 5.625);
+  // 2026-11-17 (dad, same change as the old app's c6f3186): the dwell box is
+  // 15% TALLER than the old app's 485.07, grown equally up and down, and no
+  // wider; the glyph is drawn heavy (same-colour stroke) with no glow.
+  assert.ok(Math.abs(m.ready.h - 485.07 * 1.15) < 3, `ready arrow height ${m.ready.h}, want 1.15 x 485.07 = 557.83`);
+  assert.ok(Math.abs(m.ready.w - 552.57) < 1, `ready arrow width ${m.ready.w}, unchanged 552.57`);
+  assert.ok(Math.abs(m.readyCy - 505) < 0.5, `ready arrow centre-y ${m.readyCy}, was 505 before it grew`);
+});
+
+// Shared by both viewport branches: the box grows 1.15x over the corner
+// arrow's height times the scale (the corner box is glyph + 2x6px; the ready
+// box is glyph + 2x0.243em), its centre stays on the image frame's centre
+// line (top:50% + translateY(-50%)), and the glyph is stroked and unglowed.
+function readyArrowLaw(m, scale) {
   const grew = m.ready.h / m.small.next.h;
-  assert.ok(Math.abs(grew - 5.625) < 0.05, `ready arrow grows 5.625x, got ${grew.toFixed(3)}`);
-  assert.ok(Math.abs(m.ready.h - 485.07) < 6, `ready arrow height ${m.ready.h}, old app 485.07`);
-  assert.ok(Math.abs(m.ready.w - 552.57) < 6, `ready arrow width ${m.ready.w}, old app 552.57`);
+  assert.ok(Math.abs(grew - scale * 1.15) < 0.05,
+    `ready arrow grows ${scale} x 1.15 = ${(scale * 1.15).toFixed(3)}x, got ${grew.toFixed(3)}`);
+  assert.ok(Math.abs(m.ready.w / m.small.next.w - scale) < 0.05,
+    `ready arrow is no wider than ${scale}x the corner arrow, got ${(m.ready.w / m.small.next.w).toFixed(3)}`);
+  assert.ok(Math.abs(m.readyCy - m.frameCy) < 0.5,
+    `ready arrow centre-y ${m.readyCy} sits on the frame centre ${m.frameCy}`);
+  assert.ok(m.readyGlyph.stroke > 0, `ready glyph carries a text stroke, got ${m.readyGlyph.stroke}`);
+  assert.equal(m.readyGlyph.shadow, "none", "ready glyph has no glow (it rims the thick stroke)");
+}
+
+test("ready-arrow at 900x700 CSS (the <=900px branch): scale 2.94, the same 15% taller box", async () => {
+  const m = await readerAt(900, 700);
+  assert.match(m.transform, /^matrix\(2\.94, 0, 0, 2\.94,/, `ready-arrow transform ${m.transform}`);
+  readyArrowLaw(m, 2.94);
 });
 
 // The harness guard on SEAMS itself. A name no hub file reads LOOKS like a
